@@ -13,9 +13,13 @@ MPC offers several advantages over PID control:
 - **Versatility with heater types:** MPC performs equally well with standard cartridge heaters and PTC heaters.
 - **Applicable to both hotends and beds:** MPC can be used to control the temperature of both hotends and beds.
 - **Effective for high and low flow hotends:** Regardless of the flow rate of the hotend, MPC maintains effective temperature control.     
+  
+  
 
 > [!CAUTION]
 > This feature controls the portions of the 3D printer that can get very hot. All standard Danger Klipper warnings apply. Please report all issues and bugs to github or discord.
+
+
 
 # Configuration
 
@@ -51,19 +55,21 @@ cooling_fan: fan
 
 ## Filament Feed Forward Configuration
 
-MPC can look forward to changes in extrusion rates which could require more or less heat input to maintain target temperatures. This substantially improves the accuracy and responsiveness of the model. Thusly specifying these parameters is highly reccomended for best performance. Note that filament feed forward is not enabled by default unless the density and heat capacity are specified.
+MPC can look forward to changes in extrusion rates which could require more or less heat input to maintain target temperatures. This substantially improves the accuracy and responsiveness of the model during printing. 
 
 These should only be set under [extruder] and are not valid for [heater_bed]. 
 
 ```
 #filament_diameter: 1.75
 #   (mm)
-#filament_density: 0.0
-#   (g/mm^2)
-#   An initial setting of 1.20 is reccomended as a starting value.
-#filament_heat_capacity: 0.0
+#filament_density: 1.2
+#   (g/mm^3)
+#   1.2 is the default to cover a wide range of 
+#   standard materials including ABS, ASA, PLA, PETG
+#filament_heat_capacity: 1.8
 #   (J/g/K)
-#   A initial setting of 1.8 is reccomended as a starting value.
+#   1.8 is the default to cover a wide range of 
+#   standard materials including ABS, ASA, PLA, PETG
 ```
 
 Filament feed forward parameters can be set, for the printer session, via the command line or custom G-Code with the following command.
@@ -72,14 +78,14 @@ Filament feed forward parameters can be set, for the printer session, via the co
 
 `HEATER=<heater>`: Only [extruder] is supported.
 
-`FILAMENT_DENSITY=<value> `:  Filament density in g/mm^2
+`FILAMENT_DENSITY=<value> `:  Filament density in g/mm^3
 
 `FILAMENT_HEAT_CAPACITY=<value>`: Filament heat capacity in J/g/K
 
 For example, updating the filament material properties for ASA would be:   
 
 ```
-MPC_SET HEATER=extruder FILAMENT_DENSITY=1.07 FILAMENT_HEAT_CAPACITY=1.8  
+MPC_SET HEATER=extruder FILAMENT_DENSITY=1.07 FILAMENT_HEAT_CAPACITY=1.7  
 ```
 
 ## Optional model parameters
@@ -89,10 +95,12 @@ These can be tuned but should not need changing from the default values.
 ```
 #target_reach_time: 2.0
 #   (sec) 
-#smoothing: 0.25
+#smoothing: 0.83
 #   (sec)
-#   This parameter affects how quickly the model learns. 
-#   Higher value will make it learn faster.
+#   This parameter affects how quickly the model learns and it
+#   represents the ratio of temperature difference applied 
+#   per second.
+#   A value of 1.0 represents no smoothing used in the model.
 #min_ambient_change: 1.0
 #   (deg C)
 #   Larger values of MIN_AMBIENT_CHANGE will result in faster 
@@ -101,8 +109,6 @@ These can be tuned but should not need changing from the default values.
 #steady_state_rate: 0.5
 #   (deg C/s) 
 ```
-
-
 
 ## Example configuration block
 
@@ -188,6 +194,14 @@ A **SAVE_CONFIG** command is then required to commit these calibrated parameters
 #*# ambient_transfer = 15.6868
 ```
 
+
+
+> [!NOTE]
+
+> If the [extruder] and [heater_bed] sections are located in a cfg file other than printer.cfg the SAVE_CONFIG command may not be able to write the calibration parameters and klippy will provide an error. 
+
+
+
 The calibrated parameters are not suitable for pre-configuration or are not explicetly determinable. Advanced users could tweak these post calibration based on the following guidance: Slightly increasing these values will increase the temperature where MPC settles and slightly decreasing them will decrease the settling temperature.  
 
 ```
@@ -247,8 +261,6 @@ https://192.168.xxx.xxx:7125/printer/objects/query?extruder
 ```
 
 ![Calibration](/docs/img/MPC_realtime_output.png)
-
-
 
 # BACKGROUND
 
