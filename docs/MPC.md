@@ -27,6 +27,7 @@ Currently only [extruder] and [heater_bed] heater types are supported.
 control: mpc
 heater_power:
 #   Nameplate heater power in watts. 
+
 #   Note that for a PTC, a non-linear heater, MPC may not work optimally due
 #   to the change in power output relative to temperature for this style of
 #   heater. Setting heater_power to the power output at the expected printing
@@ -51,7 +52,9 @@ cooling_fan: fan
 
 ## Filament Feed Forward Configuration
 
+
 MPC can look forward to changes in extrusion rates which could require more or less heat input to maintain target temperatures. This substantially improves the accuracy and responsiveness of the model during printing. 
+
 
 These should only be set under [extruder] and are not valid for [heater_bed]. 
 
