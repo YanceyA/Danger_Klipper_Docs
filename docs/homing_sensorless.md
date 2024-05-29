@@ -1,5 +1,20 @@
 # Sensorless Homing
-Sensorless homing has been integrated into Danger Klipper and no longer requires sensorless homing macros to set currents, error check movements, and configure movement patterns. For DK smart sensorless a simple configuration will suffice.
+Sensorless homing has been integrated into Danger Klipper and no longer requires sensorless homing macros to set currents, error checks movements, and configure movement patterns. For DK smart sensorless a simple configuration will suffice.
+
+dangerklipper sensorless homing has:
+ - home_current to automatically change the stepper current and dwell time while homing
+ - min_home_dist to backoff if traveled shorter and try again..
+ - error if 2nd try is smaller than homing_retract_dist with configurable tolerance
+ - no macros needed
+- No macros required
+- Simple config
+- No need for homing override
+- Run Current setup per axis
+- Homing current setup per axis
+- Second home to improved accuracy
+  
+the gist is, you can set homing current in the config block (no need for macros for that), and set retract distance (which doesnt work in klipper mainline)
+
 
 This document is supplemental and in some places superceedes the sensorless homing information contained in [https://github.com/DangerKlippers/danger-klipper/blob/master/docs/TMC_Drivers.md]
 
@@ -11,33 +26,84 @@ Basic Outline:
   
 - First Homing
 
+What is actually reccomended method to set sensitiviy, speed, and currnet.
 
 
-Updated guidance on:
+Tips:
+- Home fast (80mm/s) to generate consistent EMF
+- retract distance higher than min home dist
+
+
+TODO Updated guidance on:
 homing currents
--Home at 50%-100%
--Different for various drivers
--AWD guidance to disable steppers
-run current
-current reset
+- Home at 50%-100% run currnet
+- Different for various drivers
+- AWD guidance to disable steppers X1/Y1 steppers before home
+
+run currents
+
 homing speeds
--Reccomended to home at higher speeds than Klipper (40-100mm/s)
+- Reccomended to home at higher speeds than Klipper reccomended (40-100mm/s)
+- 
 second homings
+
 retract distance
 
+
+Issues that can affect sensorless:
+- Belt tension issues
+- Motion binding, especially from static friction
+- Motion binding from tempeature
+
+
+Specific Stepper Driver Guidance:
+
+TMC2209
+-reccomend 1/2 running current
+
+TMC2240
+
+TMC2160
+
+TMC5160
+-homing current not required?
+
+Motor Specific Guidance:
+
+2004s
+
+2504s
+
+2804s
+
+
+
 Setting up alternative homing methods
--Y before X
--No need for homing override
+- Y before X
+
+
+References:
+Eric Zimmerman
+[https://github.com/EricZimmerman/VoronTools/blob/main/Sensorless.md]
+Klipper Sensorless
+
+Clee Voron Sensorless Guide
+[https://docs.vorondesign.com/community/howto/clee/sensorless_xy_homing.html]
+
+
 
 
 
 DK config
-#homing_elapsed_distance_tolerance: 0.5
-#   Tolerance (in mm) for distance moved in the second homing. Ensures the
-#   second homing distance closely matches the `min_home_dist` when using
-#   sensorless homing. The default is 0.5mm.
+```
+homing_elapsed_distance_tolerance: 0.5
+Tolerance (in mm) for distance moved in the second homing. Ensures the
+second homing distance closely matches the `min_home_dist` when using
+sensorless homing. The default is 0.5mm.
+```
 
-stepper:
+stepper
+```
 #homing_speed: 5.0
 #   Maximum velocity (in mm/s) of the stepper when homing. The default
 #   is 5mm/s.
@@ -62,8 +128,11 @@ stepper:
 #use_sensorless_homing:
 #   If true, disables the second home action if homing_retract_dist > 0.
 #   The default is true if endstop_pin is configured to use virtual_endstop
+```
 
+```
 TMC:
 #run_current:
 #home_current:
 #current_change_dwell_time:
+```
