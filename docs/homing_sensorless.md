@@ -33,6 +33,7 @@ Tips:
 - Home fast (80mm/s) to generate consistent EMF
 - retract distance higher than min home dist
 
+Deathsneeze: tl;dr: make sure printer.cfg / mcu jumper stuff is correct, dont try and home slow, start at high sens and walk it down till you get a consistent home without it skipping steps or false triggers, then reduce homing current to soften the bump. on 48v its even easier, as you only have like 2 values of sens that work, and you can tune how hard it bumps with both homing speed and homing current
 
 TODO Updated guidance on:
 homing currents
