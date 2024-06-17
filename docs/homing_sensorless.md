@@ -7,7 +7,8 @@ Sensorless homing has been integrated into Danger Klipper (DK) and no longer req
  - If 2nd homing attempt movement is smaller than homing_retract_dist an error is produced. A tolerance for this distance is avaliable for configure.
  - No macros required
  - Easy to setup run and homing currents on per axis basis
- - Second home with configurable speed to improve accuracy of homing operation. 
+ - Second home with configurable speed to improve accuracy of homing operation.
+ - Homing retact distance to verify homing operation and post home retract.
 
 # Quick Setup Guide
 1. Remove any sensorless homing macros or macro functions currently configured.
@@ -30,11 +31,13 @@ Sensorless homing has been integrated into Danger Klipper (DK) and no longer req
 5. Determine appropriate sensorless driver threshold homing values, driver_SGT. It is reccomended to retune the values even if coming from a functional macro based sensorless system.
 6. Save the config and validate that the printer can home reliably both cold and hot.
 
+**TODO: ADD GRAPHICS FOR HOMING PARAMETERS.**
+
 ## Sensorless driver threshold tuning guides
+- TODO: Should we create our own tuning guide?? What do we being to the table that the guides below done have?
 - Eric Zimmerman [https://github.com/EricZimmerman/VoronTools/blob/main/Sensorless.md]
 - Clee Voron Sensorless Guide [https://docs.vorondesign.com/community/howto/clee/sensorless_xy_homing.html]
   
-
 # Smart Sensorless Config Options
 
 [stepper]
@@ -114,7 +117,6 @@ endstop_pin:
 These config options are distilled from:
 - [https://github.com/DangerKlippers/danger-klipper/blob/master/docs/Config_Reference.md#stepper ]
 - [https://github.com/DangerKlippers/danger-klipper/blob/master/docs/Config_Reference.md#tmc-stepper-driver-configuration ]
-
 
 # Sample Reference Config
 
