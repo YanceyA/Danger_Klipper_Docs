@@ -11,7 +11,6 @@ MPC offers several advantages over PID control:
 - **Simplified calibration process:** MPC is easier to calibrate compared to traditional PID control. 
 - **Compatibility with all hotend sensor types:** MPC works with all types of hotend sensors, including those that produce noisy temperature readings.
 - **Versatility with heater types:** MPC performs equally well with standard cartridge heaters and PTC heaters.
-- **Applicable to both hotends and beds:** MPC can be used to control the temperature of both hotends and beds.
 - **Effective for high and low flow hotends:** Regardless of the flow rate of the hotend, MPC maintains effective temperature control.     
 
 > [!CAUTION]
@@ -19,11 +18,10 @@ MPC offers several advantages over PID control:
 
 # Configuration
 
-To use MPC as the temperature controller set the following configuration parameters in the appropriate heater section of the config.   
-Currently only [extruder] and [heater_bed] heater types are supported.  
+To use MPC as the temperature controller set the following configuration parameters in the appropriate [extruder] section of the config.   
 
 ```
-[extruder] OR [heater_bed]
+[extruder]
 control: mpc
 heater_power:
 #   Nameplate heater power in watts. 
@@ -34,11 +32,7 @@ heater_power:
 #   temperature is recommended.
 cooling_fan: fan 
 #   This is the fan that is cooling extruded filament and the hotend.
-#   cooling_fan is supported for [heater_bed] but accurate performance has
-#   not been verified.
 #   Specifying "fan" will automatically use the part cooling fan.
-#   Bed fans could be used for the [heater_bed] by specifying
-#   <fan_generic BedFans> for example.
 #ambient_temp_sensor: <temperature_sensor sensor_name>
 #   Optional. If this is not given MPC will estimate this parameter
 #   (recommended).
@@ -54,9 +48,6 @@ cooling_fan: fan
 
 
 MPC can look forward to changes in extrusion rates which could require more or less heat input to maintain target temperatures. This substantially improves the accuracy and responsiveness of the model during printing. 
-
-
-These should only be set under [extruder] and are not valid for [heater_bed]. 
 
 ```
 #filament_diameter: 1.75
@@ -114,11 +105,7 @@ control: mpc
 heater_power: 50  
 cooling_fan: fan
 filament_density: 1.20
-filament_heat_capacity: 1.8
-
-[heater_bed]
-control: mpc
-heater_power: 400  
+filament_heat_capacity: 1.8 
 ```
 
 > [!IMPORTANT]
@@ -133,15 +120,15 @@ The MPC default calibration routine takes the following steps:
 - Hold temperature while measuring ambient heat-loss: At this point enough is known for the MPC algorithm to engage. The calibration routine makes a best guess at the overshoot past 200°C which will occur and targets this temperature for about a minute while ambient heat-loss is measured without (and optionally with) the fan.
 - MPC calibration routine creates the appropriate model constants and saves them for use. At this time the model parameters are temporary and not yet saved to the printer configuration via SAVE_CONFIG.  
 
-## Hotend or Bed Calibration
+## Hotend
 
-The MPC calibration routine has to be run initially for each heater to be controlled using MPC. In order for MPC to be functional an extruder must be able to reach 200C and a bed to reach 90C.
+The MPC calibration routine has to be run initially for each heater to be controlled using MPC. In order for MPC to be functional an extruder must be able to reach 200C.
 
 `MPC_CALIBRATE HEATER=<heater> [TARGET=<temperature>] [FAN_BREAKPOINTS=<value>]`
 
-`HEATER=<heater>` :The heater to be calibrated. [extruder] or [heater_bed] supported.
+`HEATER=<heater>` :The heater to be calibrated. Only [extruder] is supported.
 
-`[TARGET=<temperature>]` : Sets the calibration temperature in degrees C. TARGET default is 200C for extruder and 90C for beds. MPC calibration is temperature independent so calibration the extruder at higher temperatures will not necessarily produce better model parameters. This is an area of exploration for advanced users
+`[TARGET=<temperature>]` : Sets the calibration temperature in degrees C. TARGET default is 200C for extruder. MPC calibration is temperature independent so calibration the extruder at higher temperatures will not necessarily produce better model parameters. This is an area of exploration for advanced users
 
 `[FAN_BREAKPOINTS=<value>]` : Sets the number off fan setpoint to test during calibration. Three fan powers (0%, 50%, 100%) are tested by default. An arbitrary number breakpoints can be specified e.g. 7 breakpoints would result in (0, 16%, 33%, 50%, 66%, 83%, 100%) fan speeds. Each breakpoint adds about 20s to the calibration.
 
@@ -152,12 +139,6 @@ Default calibration of the hotend:
 
 ```
 MPC_CALIBRATE HEATER=extruder  
-```
-
-Default calibration of the bed: 
-
-```
-MPC_CALIBRATE HEATER=heater_bed TARGET=100  
 ```
 
 After calibration the routine will generate the key model parameters which will be available for use in that printer session and are available in the log for future reference.  
@@ -173,16 +154,10 @@ A **SAVE_CONFIG** command is then required to commit these calibrated parameters
 #*# sensor_responsiveness = 0.0998635
 #*# ambient_transfer = 0.155082
 #*# fan_ambient_transfer=0.155082, 0.20156, 0.216441
-#*# 
-#*# [heater_bed]
-#*# control = mpc
-#*# block_heat_capacity = 2078.86
-#*# sensor_responsiveness = 0.0139945
-#*# ambient_transfer = 15.6868
 ```
 
 > [!NOTE]
-> If the [extruder] and [heater_bed] sections are located in a cfg file other than printer.cfg the SAVE_CONFIG command may not be able to write the calibration parameters and klippy will provide an error. 
+> If the [extruder] sections are located in a cfg file other than printer.cfg the SAVE_CONFIG command may not be able to write the calibration parameters and klippy will provide an error. 
 
 The calibrated parameters are not suitable for pre-configuration or are not explicitly determinable. Advanced users could tweak these post calibration based on the following guidance: Slightly increasing these values will increase the temperature where MPC settles and slightly decreasing them will decrease the settling temperature.  
 
@@ -333,3 +308,10 @@ This feature is a port of the Marlin MPC implementation, and all credit goes to 
 - Marlin MPC Documentation: [https://marlinfw.org/docs/features/model_predictive_control.html]
 - GITHUB PR that implemented MPC in Marlin: [https://github.com/MarlinFirmware/Marlin/pull/23751]
 - Marlin Source Code: [https://github.com/MarlinFirmware/Marlin]
+
+# TODO
+-Add experimental bed section with notes
+-Add PTC power reference charts against temperature
+-Add discord notes, specifically around ambient temp, from Lasse, PT, Dalias
+-Add temp wait macro reference
+-Add notes that MPC controls block temp and not sensor temp
