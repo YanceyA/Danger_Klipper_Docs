@@ -632,6 +632,52 @@ max_z_accel:
 [stepper_z]
 ```
 
+### ⚠️ CoreXZ Kinematics with limits for X and Y axes
+
+```
+[printer]
+kinematics: limited_corexz
+max_velocity: 500 # Hypotenuse of the two values bellow
+max_x_velocity: 400
+max_y_velocity: 300
+max_z_velocity: 5
+max_accel: 1500 # Default acceleration of your choice
+max_x_accel: 12000
+max_y_accel: 9000
+max_z_accel: 100
+scale_xy_accel: [True/False, default False]
+```
+
+`max_velocity` is usually the hypotenuses of X and Y velocity, For example:
+with `max_x_velocity: 300` and `max_y_velocity: 400`, the recommended value
+is `max_velocity: 500`.
+
+If `scale_xy_accel` is False, `max_accel`, set by `M204` or
+`SET_VELOCITY_LIMIT`, acts as a third limit. In that case, this module
+doesn't apply limitations to moves with an acceleration lower than
+`max_x_accel` and `max_y_accel`.
+
+When `scale_xy_accel` is `True`, `max_x_accel` and `max_y_accel` are scaled by
+the ratio of the dynamically set acceleration and the hypotenuse of
+`max_x_accel` and `max_y_accel`, as reported from `SET_KINEMATICS_LIMIT`.
+This means that the actual acceleration will always depend on the
+direction.
+
+For example with these settings:
+```
+[printer]
+max_x_accel: 12000
+max_y_accel: 9000
+scale_xy_accel: True
+```
+
+SET_KINEMATICS_LIMIT will report a maximum acceleration of 15000 mm/s^2
+on 37 degrees diagonals. Thus, setting an acceleration of 3000 mm/s^2 in
+the slicer will make the toolhead accelerate at 3000 mm/s^2 on these 37
+and 143 degrees diagonals, but only 12000 * 3000 / 15000 = 2400 mm/s^2
+for moves aligned with the X axis and 18000 mm/s^2 for pure Y moves.
+
+
 ### Hybrid-CoreXY Kinematics
 
 See [example-hybrid-corexy.cfg](../config/example-hybrid-corexy.cfg)
@@ -1332,6 +1378,8 @@ extended [G-Code command](G-Codes.md#z_tilt) becomes available.
 #   To disable the validation, set this parameter to a high value.
 ```
 
+#### [z_tilt_ng]
+
 ```
 [z_tilt_ng]
 #z_positions:
@@ -1729,8 +1777,8 @@ using this feature may place the printer in an invalid state - see the
 ```
 [force_move]
 #enable_force_move: True
-#   Set to true to enable FORCE_MOVE and SET_KINEMATIC_POSITION
-#   extended G-Code commands. The default is true.
+#   Set to `True` to enable FORCE_MOVE and SET_KINEMATIC_POSITION
+#   extended G-Code commands. The default is `True`.
 ```
 
 ### [pause_resume]
@@ -1803,6 +1851,8 @@ Support for gcode arc (G2/G3) commands.
 
 ### [respond]
 
+This module is enabled by default in DangerKlipper!
+
 Enable the "M118" and "RESPOND" extended
 [commands](G-Codes.md#respond).
 
@@ -1817,9 +1867,14 @@ Enable the "M118" and "RESPOND" extended
 #default_prefix: echo:
 #   Directly sets the default prefix. If present, this value will
 #   override the "default_type".
+#enable_respond: True
+#   Set to `True` to enable M118 and RESPOND
+#   extended G-Code commands. The default is `True`.
 ```
 
 ### [exclude_object]
+
+This module is enabled by default in DangerKlipper!
 
 Enables support to exclude or cancel individual objects during the printing
 process.
@@ -1832,6 +1887,9 @@ Marlin/RepRapFirmware compatible M486 G-Code macro.
 
 ```
 [exclude_object]
+#enable_exclude_object: True
+#   Set to `True` to enable `EXCLUDE_OBJECT_*` extended G-Code commands.
+#   The default is `True`.
 ```
 
 ## Resonance compensation
@@ -2240,13 +2298,13 @@ detach_position: 0,0,0
 #   The default value is extract_probe value.
 #safe_dock_distance :
 #   This setting defines a security area around dock during ATTACH/DETACH_PROBE
-#   commands. While inside the area, the toolhead move away prior to reach the 
+#   commands. While inside the area, the toolhead move away prior to reach the
 #   approach or insert position.
-#   Default is the smallest distance to the dock of approach, detach, insert 
+#   Default is the smallest distance to the dock of approach, detach, insert
 #   position. It could be only lower than the Default value.
 #safe_position : approach_position
-#   A safe position to ensure MOVE_AVOIDING_DOCK travel does not move the 
-#   toolhead out of range.   
+#   A safe position to ensure MOVE_AVOIDING_DOCK travel does not move the
+#   toolhead out of range.
 #z_hop: 15.0
 #   Distance (in mm) to lift the Z axis prior to attaching/detaching the probe.
 #   If the Z axis is already homed and the current Z position is less
@@ -3208,6 +3266,31 @@ pin:
 #   input. In such a case, the PWM pin can be used normally, and e.g. a
 #   ground-switched FET(standard fan pin) can be used to control power to
 #   the fan.
+```
+
+### [heated_fan]
+
+Heated print cooling fans. An experimental module for high-temperature
+printing that requires part cooling air to be closer to the printed part
+temperature.
+
+```
+
+[heated_fan]
+#   See the "fan" section for a description for fan parameters.
+#   See the "heater_generic" section for a description for the heater
+#   parameters.
+#heater_temp: 50
+#   The target temperature (in Celsius) for the heater when the fan is
+#   turned on. The default is 50 Celsius.
+#min_speed: 1.0
+#   The minimum fan speed (expressed as a value from 0.0 to 1.0) that the
+#   fan will be set to when its associated heater is on (e.g.: to protect
+#   ducts from melting). If the fan is set to a speed lower than min_speed,
+#   the min_speed value is applied. The default is 1.0 (100%)
+#idle_timeout: 60
+#   A timeout in seconds for the fan to stay on when it is requested to turn
+#   off, to protect ducts from melting. The default is 60 (s).
 ```
 
 ### [heater_fan]
