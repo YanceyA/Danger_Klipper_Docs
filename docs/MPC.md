@@ -25,24 +25,30 @@ To use MPC as the temperature controller set the following configuration paramet
 control: mpc
 heater_power:
 #   Nameplate heater power in watts. 
-
-#   Note that for a PTC, a non-linear heater, MPC may not work optimally due
-#   to the change in power output relative to temperature for this style of
+#   For a PTC, a non-linear heater, MPC may not work optimally due
+#   to the change in power output relative to heater temperature for this style of
 #   heater. Setting heater_power to the power output at the expected printing
 #   temperature is recommended.
 cooling_fan: fan 
 #   This is the fan that is cooling extruded filament and the hotend.
 #   Specifying "fan" will automatically use the part cooling fan.
-#ambient_temp_sensor: <temperature_sensor sensor_name>
-#   Optional. If this is not given MPC will estimate this parameter
-#   (recommended).
-#   It can use any sensor, but it should be a temperature sensor in proximity
-#   to the hotend or measuring the ambient air surrounding the hotend such as
-#   a chamber sensor. 
-#   This is used for initial state temperature and calibration but not for
-#   actual control.
-#   Example sensor: temperature_sensor beacon_coil
 ```
+
+### PTC Heater Powers
+
+| Heater Temp (C) | Rapido (w)| Rapido 2 (w) | Dragon Ace (w) | Revo (w) |
+| -------- | --------------- | --------------------- | 
+| 50      | 1.25            | 1.8 - 2.2             |
+| 100     | 1.27            | 1.7 - 2.2             |
+| 150   | 1.15            | 1.5 - 2.2             |
+| 180      | 1.06            | 1.25 - 2.4            |
+| 200      | 1.07            | 1.3 - 2.1             |
+| 220      | 1.12            | 2 - 2.5               |
+| 240       | 1.15            | 2 - 2.5               |
+| 260       | 1.20            | 1.1 - 1.9             |
+| 280      | 1.21            | 1.5 - 2               |
+| 300  | 1.15            | 1.5 - 2               |
+
 
 ## Filament Feed Forward Configuration
 
@@ -78,7 +84,7 @@ MPC_SET HEATER=extruder FILAMENT_DENSITY=1.07 FILAMENT_HEAT_CAPACITY=1.7
 
 ## Optional model parameters
 
-These can be tuned but should not need changing from the default values. 
+These can be tuned but should not need changing from the default values or parameters. 
 
 ```
 #target_reach_time: 2.0
@@ -95,6 +101,15 @@ These can be tuned but should not need changing from the default values.
 #   somewhat chaotically around the ideal value.  
 #steady_state_rate: 0.5
 #   (deg C/s)
+#ambient_temp_sensor: <temperature_sensor sensor_name>
+#   Optional. If this is not given MPC will estimate this parameter
+#   (recommended).
+#   It can use any sensor, but it should be a temperature sensor in proximity
+#   to the hotend or measuring the ambient air surrounding the hotend such as
+#   a chamber sensor. 
+#   This is used for initial state temperature and calibration but not for
+#   actual control.
+#   Example sensor: temperature_sensor beacon_coil
 ```
 
 ## Example configuration block
@@ -157,7 +172,7 @@ A **SAVE_CONFIG** command is then required to commit these calibrated parameters
 ```
 
 > [!NOTE]
-> If the [extruder] sections are located in a cfg file other than printer.cfg the SAVE_CONFIG command may not be able to write the calibration parameters and klippy will provide an error. 
+> If the [extruder] section is located in a cfg file other than printer.cfg the SAVE_CONFIG command may not be able to write the calibration parameters and klippy will provide an error. 
 
 The calibrated parameters are not suitable for pre-configuration or are not explicitly determinable. Advanced users could tweak these post calibration based on the following guidance: Slightly increasing these values will increase the temperature where MPC settles and slightly decreasing them will decrease the settling temperature.  
 
@@ -207,8 +222,13 @@ MPC works best knowing how much energy (in Joules) it takes to heat 1mm of filam
 
 **Use the specific heat from the base polymer
 
-### An example macro for automatically setting these values
+## Support Macros
 
+## Temperature Wait
+
+ADD
+
+### Setting Filament Feed Forward Parameters From The Slicer
 These values are copied from the above tables, heat capacities are the middle of the range.
 
 Your slicer must be configured to pass the current material type to your `PRINT_START`, for PrusaSlicer and family you may use `PRINT_START MATERIAL=[filament_type[initial_extruder]] # and other values...`
@@ -269,6 +289,11 @@ https://192.168.xxx.xxx:7125/printer/objects/query?extruder
 ```
 
 ![Calibration](/docs/img/MPC_realtime_output.png)
+
+# EXPERIMENTAL FEATURES
+
+## MPC for Bed Heater
+
 
 # BACKGROUND
 
