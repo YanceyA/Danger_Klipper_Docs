@@ -34,24 +34,24 @@ cooling_fan: fan
 #   Specifying "fan" will automatically use the part cooling fan.
 ```
 
-### PTC Heater Powers
+### PTC Heater Power
 
-| Heater Temp (C) | Rapido (w)| Rapido 2 (w) | Dragon Ace (w) | Revo (w) |
-| -------- | --------------- | --------------------- | 
-| 50      | 1.25            | 1.8 - 2.2             |
-| 100     | 1.27            | 1.7 - 2.2             |
-| 150   | 1.15            | 1.5 - 2.2             |
-| 180      | 1.06            | 1.25 - 2.4            |
-| 200      | 1.07            | 1.3 - 2.1             |
-| 220      | 1.12            | 2 - 2.5               |
-| 240       | 1.15            | 2 - 2.5               |
-| 260       | 1.20            | 1.1 - 1.9             |
-| 280      | 1.21            | 1.5 - 2               |
-| 300  | 1.15            | 1.5 - 2               |
+The `heater power:` for PTC style heaters is reccomended to be set at the normal print temperature for the printer. Some common PTC heaters are given below for reference. If your heater is not listed the manufacturer should be able to provide a temperature and power curve.
+
+| Heater Temp (C) | Rapido 2 (W) | Rapido 1 (W) | Dragon Ace (W) | Revo (w) |
+|:---------------:|:------------:|:------------:|:--------------:| -------- |
+| 180             | 72           | 52           | 51             |          |
+| 200             | 70           | 51           | 48             |          |
+| 220             | 67           | 50           | 46             |          |
+| 240             | 65           | 49           | 44             |          |
+| 260             | 64           | 48           | 43             |          |
+| 280             | 62           | 47           | 41             |          |
+| 300             | 60           | 46           | 39             |          |
+
+
 
 
 ## Filament Feed Forward Configuration
-
 
 MPC can look forward to changes in extrusion rates which could require more or less heat input to maintain target temperatures. This substantially improves the accuracy and responsiveness of the model during printing. 
 
@@ -222,13 +222,46 @@ MPC works best knowing how much energy (in Joules) it takes to heat 1mm of filam
 
 **Use the specific heat from the base polymer
 
-## Support Macros
+# Support Macros
 
 ## Temperature Wait
 
-ADD
+
+The following macro can be used to replace M109 Hotend Temp Set and M190 Bed Temp Set gcode commands with `temperature_wait` gcodes.
+
+```
+[gcode_macro M109] # Wait Hotend Temp
+rename_existing: M109.1
+gcode:
+    #Parameters
+    {% set s = params.S|float %}
+    
+    M104 {% for p in params %}{'%s%s' % (p, params[p])}{% endfor %}  # Set hotend temp
+    {% if s != 0 %}
+        TEMPERATURE_WAIT SENSOR=extruder MINIMUM={s-2} MAXIMUM={s+5}   # Wait for hotend temp (within n degrees)
+    {% endif %}
+
+
+[gcode_macro M190] # Wait Bed Temp
+rename_existing: M190.1
+gcode:
+    #Parameters
+    {% set s = params.S|float %}
+
+    M140 {% for p in params %}{'%s%s' % (p, params[p])}{% endfor %}   # Set bed temp
+    {% if s != 0 %}
+        TEMPERATURE_WAIT SENSOR=heater_bed MINIMUM={s-2} MAXIMUM={s+5}  # Wait for bed temp (within n degrees)
+    {% endif %}
+```
+
+
+
+
+
+
 
 ### Setting Filament Feed Forward Parameters From The Slicer
+
 These values are copied from the above tables, heat capacities are the middle of the range.
 
 Your slicer must be configured to pass the current material type to your `PRINT_START`, for PrusaSlicer and family you may use `PRINT_START MATERIAL=[filament_type[initial_extruder]] # and other values...`
@@ -292,7 +325,35 @@ https://192.168.xxx.xxx:7125/printer/objects/query?extruder
 
 # EXPERIMENTAL FEATURES
 
-## MPC for Bed Heater
+## Bed Heater
+
+Using MPC for bed heater control is functional but the performance is not guarenteed or currently supported.  MPC for the bed can be configured:
+
+```
+[heater_bed]
+control: mpc
+heater_power:
+#   Heater power in watts. 
+#cooling_fan: 
+#   Bed fans could be used for the [heater_bed] by 
+#   specifying <fan_generic BedFans>.
+
+```
+
+The bed should be able to reach at least 90C to perform calibration with the same parameters. 
+
+`MPC_CALIBRATE HEATER=<heater> [TARGET=<temperature>] [FAN_BREAKPOINTS=<value>]`
+
+
+
+Default calibration of the bed for 100C: 
+
+```
+MPC_CALIBRATE HEATER=heater_bed TARGET=100   
+```
+
+A **SAVE_CONFIG** command is then required to commit these calibrated parameters to the printer config.
+
 
 
 # BACKGROUND
@@ -335,8 +396,9 @@ This feature is a port of the Marlin MPC implementation, and all credit goes to 
 - Marlin Source Code: [https://github.com/MarlinFirmware/Marlin]
 
 # TODO
--Add experimental bed section with notes
--Add PTC power reference charts against temperature
+
+-Add experimental bed section with notes (partial)
+-Add PTC power reference charts against temperature (done)
 -Add discord notes, specifically around ambient temp, from Lasse, PT, Dalias
 -Add temp wait macro reference
 -Add notes that MPC controls block temp and not sensor temp
