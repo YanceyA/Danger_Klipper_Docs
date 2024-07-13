@@ -189,7 +189,6 @@ Default calibration of the hotend with seven fan breakpoints:
 ```
 MPC_CALIBRATE HEATER=extruder FAN_BREAKPOINTS=7
 ```
-
 > [!NOTE]
 > Ensure that the part cooling fan is off before starting calibration.  
 
