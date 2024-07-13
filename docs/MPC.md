@@ -57,8 +57,35 @@ filament_heat_capacity: 1.8
   
 - `filament_heat_capacity: 1.80`  
   _Default Value: 1.80 (J/g/K)_  
-  This is the material specific heat capacity of the filament being printed.
+  This is the material specific heat capacity of the filament being printed.  
+
+## Optional Config Parameters
+
+These can be specified in the config but should not need to be changed from the default values for most users.
+
+- `maximum_retract:`  
+  _Default Value: 2.0 (mm)_  
+  This value clamps how much the extruder is allowed to go backwards in a single period during MPC FFF calculations. This lets the filament power go negative and add a small amount of energy to the system.  
+
+- `target_reach_time:`  
+  _Default Value: 2.0 (sec)_  
+ 
+- `smoothing:`  
+  _Default Value: 0.83 (sec)_  
+  This parameter affects how quickly the model learns and it represents the ratio of temperature difference applied per second. A value of 1.0 represents no smoothing used in the model.  
   
+- `min_ambient_change:`  
+  _Default Value: 1.0 (deg C)_  
+  Larger values of MIN_AMBIENT_CHANGE will result in faster convergence but will also cause the simulated ambient temperature to flutter somewhat chaotically around the ideal value.  
+  
+- `steady_state_rate:`  
+  _Default Value: 0.5 (deg C/s)_  
+  
+- `ambient_temp_sensor: temperature_sensor <sensor_name>`  
+  _Default Value: MPC ESTIMATE_  
+  It is recommended not to specify this parameter and let MPC will estimate. This is used for initial state temperature and calibration but not for actual control.  
+  Any temperature sensor could be used, but the sensor should be in proximity to the hotend or measuring the ambient air surrounding the hotend.  
+
 ## PTC Heater Power
 
 The `heater power:` for PTC style heaters is recommended to be set at the normal print temperature for the printer. Some common PTC heaters are given below for reference. If your heater is not listed the manufacturer should be able to provide a temperature and power curve.
@@ -79,11 +106,12 @@ The Filament feed forward (FFF) feature allows MPC to look forward and see chang
 
  FFF parameters can be set, for the printer session, via the `MPC_SET` G-Code command:  
 
-`MPC_SET HEATER=<heater> FILAMENT_DENSITY=<value> FILAMENT_HEAT_CAPACITY=<value>`
+`MPC_SET HEATER=<heater> FILAMENT_DENSITY=<value> FILAMENT_HEAT_CAPACITY=<value> [FILAMENT_TEMP=<sensor|ambient|<value>>]`
 
-- `HEATER`: Only extruder is supported
-- `FILAMENT_DENSITY`:  Filament density in g/mm^3
+- `HEATER`: Only extruder is supported  
+- `FILAMENT_DENSITY`: Filament density in g/mm^3
 - `FILAMENT_HEAT_CAPACITY`: Filament heat capacity in J/g/K
+- `FILAMENT_TEMP`: This can be set to either `sensor`, `ambient`, or a set temperature value. FFF will use the specific energy required to heat the filament and the power loss will be calculated based on the delta T.
 
 For example, updating the filament material properties for ASA would be:   
 
@@ -91,29 +119,40 @@ For example, updating the filament material properties for ASA would be:
 MPC_SET HEATER=extruder FILAMENT_DENSITY=1.07 FILAMENT_HEAT_CAPACITY=1.7  
 ```
 
-## Optional Config Parameters
+## Filament Physical Properties
 
-These can be specified in the config but should not need to be changed from the default values for most users.
+MPC works best knowing how much energy (in Joules) it takes to heat 1mm of filament by 1°C. The material values from the tables below have been curated from popular filament manufacturers and material data references. These values are sufficient for MPC to implement the FFF feature.  Advanced users could tune the `filament_density` and `filament_heat_capacity` parameters based on manufacturers datasheets. 
 
-- `target_reach_time:`  
-  _Default Value: 2.0 (sec)_  
- 
-- `smoothing:`  
-  _Default Value: 0.83 (sec)_  
-  This parameter affects how quickly the model learns and it represents the ratio of temperature difference applied per second. A value of 1.0 represents no smoothing used in the model.  
-  
-- `min_ambient_change:`  
-  _Default Value: 1.0 (deg C)_  
-  Larger values of MIN_AMBIENT_CHANGE will result in faster convergence but will also cause the simulated ambient temperature to flutter somewhat chaotically around the ideal value.  
-  
-- `steady_state_rate:`  
-  _Default Value: 0.5 (deg C/s)_  
-  
-- `ambient_temp_sensor: temperature_sensor <sensor_name>`  
-  _Default Value: MPC ESTIMATE_  
-  It is recommended not to specify this parameter and let MPC will estimate. This is used for initial state temperature and calibration but not for actual control.  
-  Any temperature sensor could be used, but the sensor should be in proximity to the hotend or measuring the ambient air surrounding the hotend.  
-  
+### Common Materials
+
+| Material | Density [g/cm³] | Specific heat [J/g/K] |
+| -------- |:---------------:|:---------------------:|
+| PLA      | 1.25            | 1.8 - 2.2             |
+| PETG     | 1.27            | 1.7 - 2.2             |
+| PC+ABS   | 1.15            | 1.5 - 2.2             |
+| ABS      | 1.06            | 1.25 - 2.4            |
+| ASA      | 1.07            | 1.3 - 2.1             |
+| PA6      | 1.12            | 2 - 2.5               |
+| PA       | 1.15            | 2 - 2.5               |
+| PC       | 1.20            | 1.1 - 1.9             |
+| TPU      | 1.21            | 1.5 - 2               |
+| TPU-90A  | 1.15            | 1.5 - 2               |
+| TPU-95A  | 1.22            | 1.5 - 2               |
+
+### Common Carbon Fiber Filled Materials
+
+| Material                                     | Density [g/cm³] | Specific heat [J/g/K] |
+| -------------------------------------------- |:---------------:|:---------------------:|
+| ABS-CF                                       | 1.11            | ^                     |
+| ASA-CF                                       | 1.11            | ^                     |
+| PA6-CF                                       | 1.19            | ^                     |
+| PC+ABS-CF                                    | 1.22            | ^                     |
+| PC+CF                                        | 1.36            | ^                     |
+| PLA-CF                                       | 1.29            | ^                     |
+| PETG-CF                                      | 1.30            | ^                     |  
+
+^ Use the specific heat from the base polymer  
+
 # Calibration
 
 The MPC default calibration routine takes the following steps:
@@ -179,40 +218,6 @@ These model parameters are not suitable for pre-configuration or are not explici
 - `fan_ambient_transfer:`  
   Heat transfer from heater block to ambient in with fan enabled in (W/K).  
   
-## Filament Physical Properties
-
-MPC works best knowing how much energy (in Joules) it takes to heat 1mm of filament by 1°C. The material values from the tables below have been curated from popular filament manufacturers and material data references. These values are sufficient for MPC to implement the FFF feature.  Advanced users could tune the `filament_density` and `filament_heat_capacity` parameters based on manufacturers datasheets. 
-
-### Common Materials
-
-| Material | Density [g/cm³] | Specific heat [J/g/K] |
-| -------- |:---------------:|:---------------------:|
-| PLA      | 1.25            | 1.8 - 2.2             |
-| PETG     | 1.27            | 1.7 - 2.2             |
-| PC+ABS   | 1.15            | 1.5 - 2.2             |
-| ABS      | 1.06            | 1.25 - 2.4            |
-| ASA      | 1.07            | 1.3 - 2.1             |
-| PA6      | 1.12            | 2 - 2.5               |
-| PA       | 1.15            | 2 - 2.5               |
-| PC       | 1.20            | 1.1 - 1.9             |
-| TPU      | 1.21            | 1.5 - 2               |
-| TPU-90A  | 1.15            | 1.5 - 2               |
-| TPU-95A  | 1.22            | 1.5 - 2               |
-
-### Common Carbon Fiber Filled Materials
-
-| Material                                     | Density [g/cm³] | Specific heat [J/g/K] |
-| -------------------------------------------- |:---------------:|:---------------------:|
-| ABS-CF                                       | 1.11            | ^                     |
-| ASA-CF                                       | 1.11            | ^                     |
-| PA6-CF                                       | 1.19            | ^                     |
-| PC+ABS-CF                                    | 1.22            | ^                     |
-| PC+CF                                        | 1.36            | ^                     |
-| PLA-CF                                       | 1.29            | ^                     |
-| PETG-CF                                      | 1.30            | ^                     |  
-
-^ Use the specific heat from the base polymer
-
 # Support Macros
 
 ## Temperature Wait
