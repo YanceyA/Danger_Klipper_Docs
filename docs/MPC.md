@@ -83,7 +83,7 @@ These can be specified in the config but should not need to be changed from the 
   
 - `ambient_temp_sensor: temperature_sensor <sensor_name>`  
   _Default Value: MPC ESTIMATE_  
-  It is recommended not to specify this parameter and let MPC will estimate. This is used for initial state temperature and calibration but not for actual control.  
+  It is recommended not to specify this parameter and let MPC will estimate. This is used for initial state temperature and calibration but not for actual control.
   Any temperature sensor could be used, but the sensor should be in proximity to the hotend or measuring the ambient air surrounding the hotend.  
 
 ## PTC Heater Power
@@ -102,16 +102,23 @@ The `heater power:` for PTC style heaters is recommended to be set at the normal
 
 ## Filament Feed Forward Configuration
 
-The Filament feed forward (FFF) feature allows MPC to look forward and see changes in extrusion rates which could require more or less heat input to maintain target temperature. This feature substantially improves the accuracy and responsiveness of the model during printing. It is enabled by default and can be defined is more detail with `filament_density` and `filament_heat_capacity` config parameters. The default values are set to cover a wide range of standard materials including ABS, ASA, PLA, PETG. 
+The filament feed forward (FFF) feature allows MPC to look forward and see changes in extrusion rates which could require more or less heat input to maintain target temperature. This feature substantially improves the accuracy and responsiveness of the model during printing. It is enabled by default and can be defined is more detail with the `filament_density` and `filament_heat_capacity` config parameters. The default values are set to cover a wide range of standard materials including ABS, ASA, PLA, PETG. 
 
  FFF parameters can be set, for the printer session, via the `MPC_SET` G-Code command:  
 
 `MPC_SET HEATER=<heater> FILAMENT_DENSITY=<value> FILAMENT_HEAT_CAPACITY=<value> [FILAMENT_TEMP=<sensor|ambient|<value>>]`
 
-- `HEATER`: Only extruder is supported  
-- `FILAMENT_DENSITY`: Filament density in g/mm^3
-- `FILAMENT_HEAT_CAPACITY`: Filament heat capacity in J/g/K
-- `FILAMENT_TEMP`: This can be set to either `sensor`, `ambient`, or a set temperature value. FFF will use the specific energy required to heat the filament and the power loss will be calculated based on the delta T.
+- `HEATER`:  
+  Only extruder is supported
+  
+- `FILAMENT_DENSITY`:  
+  Filament density in g/mm^3
+  
+- `FILAMENT_HEAT_CAPACITY`:  
+  Filament heat capacity in J/g/K
+  
+- `FILAMENT_TEMP`:  
+  This can be set to either `sensor`, `ambient`, or a set temperature value. FFF will use the specific energy required to heat the filament and the power loss will be calculated based on the temperature delta.  
 
 For example, updating the filament material properties for ASA would be:   
 
@@ -159,7 +166,7 @@ The MPC default calibration routine takes the following steps:
 
 > 1. Cool to ambient: The calibration routine needs to know the approximate ambient temperature and waits until the hotend temperature stabilises and stops decreasing relative to ambient.
 > 2. Heat past 200°C: Measure the point where the temperature is increasing most rapidly, and the time and temperature at that point. Also, three temperature measurements are needed at some point after the initial latency has taken effect. 
-> 3. Hold temperature while measuring ambient heat-loss: At this point enough is known for the MPC algorithm to engage. The calibration routine makes a best guess at the overshoot past 200°C which will occur and targets this temperature for about a minute while ambient heat-loss is measured without and with the fan engaged (if a `cooling_fan` is specified)
+> 3. Hold temperature while measuring ambient heat-loss: At this point enough is known for the MPC algorithm to engage. The calibration routine makes a best guess at the overshoot past 200°C which will occur and targets this temperature for about a minute while ambient heat-loss is measured without and with the fan engaged (if a `cooling_fan` is specified).
 > 4. The MPC calibration routine creates the appropriate model constants. At this time the model parameters are temporary and not yet saved to the printer configuration.  
 
 The MPC calibration routine must be run for each heater, to be controlled by MPC, in order to determine the model parameters. For an MPC calibration to be successful an extruder must be able to reach 200C. Calibration is performed with the following G-code command.
@@ -171,7 +178,7 @@ The MPC calibration routine must be run for each heater, to be controlled by MPC
   
 - `TARGET=<temperature>`:  
   _Default Value: 200 (deg C)_  
-  Sets the calibration temperature. TARGET default is 200C, which is a good target for the extruder. MPC calibration is temperature independent, so calibrating the extruder at higher temperatures will not necessarily produce better model parameters. This is an area of exploration for advanced users.  
+  Sets the calibration temperature. The default of 200C is a good target for the extruder. MPC calibration is temperature independent, so calibrating the extruder at higher temperatures will not necessarily produce better model parameters. This is an area of exploration for advanced users.  
   
 - `FAN_BREAKPOINTS=<value>`:  
   _Default Value: 3_  
@@ -190,9 +197,11 @@ After successful  calibration the method will generate the key model parameters 
 
 ![Calibration Parameter Output](/docs/img/MPC_calibration_output.png)
 
-A **SAVE_CONFIG** command is then required to commit these calibrated model parameters to the printer config or the user can manually update the values. The `SAVE_CONFIG` block should then look like: 
+A `SAVE_CONFIG` command is then required to commit these calibrated model parameters to the printer config or the user can manually update the values. The _SAVE_CONFIG_ block should then look like: 
 
 ```
+#*# <----------- SAVE_CONFIG ----------->
+#*# DO NOT EDIT THIS BLOCK OR BELOW. The contents are auto-generated.
 #*# [extruder]
 #*# control = mpc
 #*# block_heat_capacity = 22.3110
@@ -202,7 +211,7 @@ A **SAVE_CONFIG** command is then required to commit these calibrated model para
 ```
 
 > [!NOTE]
-> If the [extruder] section is in a .cfg file other than printer.cfg the SAVE_CONFIG command may not be able to write the calibration parameters and klippy will provide an error. 
+> If the [extruder] section is in a .cfg file other than printer.cfg the `SAVE_CONFIG` command may not be able to write the calibration parameters and klippy will provide an error. 
 
 These model parameters are not suitable for pre-configuration or are not explicitly determinable. Advanced users could tweak these post calibration based on the following guidance: Slightly increasing these values will increase the temperature where MPC settles and slightly decreasing them will decrease the settling temperature.  
 
@@ -361,7 +370,7 @@ The bed should be able to reach at least 90C to perform calibration with the fol
   
 - `TARGET=<temperature>`:  
   _Default Value: 90 (deg C)_  
-  Sets the calibration temperature. TARGET default is 90C, which is a good target for the bed.  
+  Sets the calibration temperature. The default of 90C is a good target for the bed.  
   
 - `FAN_BREAKPOINTS=<value>`:  
   _Default Value: 3_  
@@ -372,7 +381,7 @@ Default calibration of the hotend with five fan breakpoints:
 MPC_CALIBRATE HEATER=heater_bed FAN_BREAKPOINTS=5
 ```
 
-These calibrated model parameters need to be saved to the SAVE_CONFIG block manually or by using the `Save_Config` command.
+These calibrated model parameters need to be saved to the _SAVE_CONFIG_ block manually or by using the `SAVE_CONFIG` command.
 
 # BACKGROUND
 
