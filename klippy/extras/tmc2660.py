@@ -119,7 +119,6 @@ class TMC2660CurrentHelper(tmc.BaseTMCCurrentHelper):
         super().__init__(config, mcu_tmc, MAX_CURRENT)
 
         self.current = self.req_run_current
-        self.sense_resistor = config.getfloat("sense_resistor")
         vsense, cs = self._calc_current(self.req_run_current)
         self.fields.set_field("cs", cs)
         self.fields.set_field("vsense", vsense)
@@ -211,6 +210,7 @@ class MCU_TMC2660_SPI:
         self.spi = bus.MCU_SPI_from_config(config, 0, default_speed=4000000)
         self.name_to_reg = name_to_reg
         self.fields = fields
+        self.mcu = self.spi.get_mcu()
 
     def get_fields(self):
         return self.fields

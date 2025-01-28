@@ -270,9 +270,7 @@ class TMC2240CurrentHelper(tmc.BaseTMCCurrentHelper):
         self.name = config.get_name().split()[-1]
         self.mcu_tmc = mcu_tmc
         self.fields = mcu_tmc.get_fields()
-        self.Rref = config.getfloat(
-            "rref", 12000.0, minval=12000.0, maxval=60000.0
-        )
+        self.Rref = config.getfloat("rref", minval=12000.0, maxval=60000.0)
         self.max_current = self._get_ifs_rms(3)
         self.config_run_current = config.getfloat(
             "run_current", above=0.0, maxval=self.max_current
@@ -381,7 +379,7 @@ class TMC2240:
         if config.get("uart_pin", None) is not None:
             # use UART for communication
             self.mcu_tmc = tmc_uart.MCU_TMC_uart(
-                config, Registers, self.fields, 3, TMC_FREQUENCY
+                config, Registers, self.fields, 7, TMC_FREQUENCY
             )
         else:
             # Use SPI bus for communication
@@ -440,6 +438,8 @@ class TMC2240:
         set_config_field(config, "tpowerdown", 10)
         #   SG4_THRS
         set_config_field(config, "sg4_angle_offset", 1)
+        #   DRV_CONF
+        set_config_field(config, "slope_control", 0)
 
 
 def load_config_prefix(config):

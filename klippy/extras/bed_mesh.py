@@ -5,7 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, math, json, collections
 from . import probe
-from extras.danger_options import get_danger_options
+from .danger_options import get_danger_options
 
 PROFILE_VERSION = 1
 PROFILE_OPTIONS = {
@@ -380,10 +380,12 @@ class BedMeshCalibrate:
         self._generate_points(config.error)
         self._profile_name = "default"
         self.probe_helper = probe.ProbePointsHelper(
-            config, self.probe_finalize, self._get_adjusted_points()
+            config,
+            self.probe_finalize,
+            self._get_adjusted_points(),
+            use_offsets=True,
         )
         self.probe_helper.minimum_points(3)
-        self.probe_helper.use_xy_offsets(True)
         self.gcode = self.printer.lookup_object("gcode")
         self.gcode.register_command(
             "BED_MESH_CALIBRATE",
@@ -513,7 +515,7 @@ class BedMeshCalibrate:
         if probe is not None:
             x_offset, y_offset = probe.get_offsets()[:2]
         print_func(
-            "bed_mesh: generated points\nIndex" " |  Tool Adjusted  |   Probe"
+            "bed_mesh: generated points\nIndex |  Tool Adjusted  |   Probe"
         )
         for i, (x, y) in enumerate(self.points):
             adj_pt = "(%.1f, %.1f)" % (x - x_offset, y - y_offset)

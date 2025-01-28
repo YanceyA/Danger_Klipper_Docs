@@ -6,7 +6,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, os, ast
-from . import hd44780, hd44780_spi, st7920, uc1701, menu
+from . import aip31068_spi, hd44780, hd44780_spi, st7920, uc1701, menu
 
 # Normal time between each screen redraw
 REDRAW_TIME = 0.500
@@ -21,6 +21,7 @@ LCD_chips = {
     "ssd1306": uc1701.SSD1306,
     "sh1106": uc1701.SH1106,
     "hd44780_spi": hd44780_spi.hd44780_spi,
+    "aip31068_spi": aip31068_spi.aip31068_spi,
 }
 
 
@@ -233,6 +234,10 @@ class PrinterLCD:
             raise config.error("Unknown display_data group '%s'" % (dgroup,))
         # Screen updating
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.printer.register_event_handler(
+            self.lcd_chip.mcu.get_non_critical_reconnect_event_name(),
+            self.handle_reconnect,
+        )
         self.screen_update_timer = self.reactor.register_timer(
             self.screen_update_event
         )
@@ -254,6 +259,9 @@ class PrinterLCD:
 
     def get_dimensions(self):
         return self.lcd_chip.get_dimensions()
+
+    def handle_reconnect(self):
+        self.lcd_chip.init()
 
     def handle_ready(self):
         self.lcd_chip.init()

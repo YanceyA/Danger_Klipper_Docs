@@ -168,7 +168,7 @@ class VirtualSD:
         self.printer.send_event("virtual_sdcard:reset_file")
 
     cmd_SDCARD_RESET_FILE_help = (
-        "Clears a loaded SD File. Stops the print " "if necessary"
+        "Clears a loaded SD File. Stops the print if necessary"
     )
 
     def cmd_SDCARD_RESET_FILE(self, gcmd):
@@ -235,6 +235,7 @@ class VirtualSD:
         self.file_position = 0
         self.file_size = fsize
         self.print_stats.set_current_file(filename)
+        self.printer.send_event("virtual_sdcard:load_file")
 
     def cmd_M24(self, gcmd):
         # Start/resume SD print
