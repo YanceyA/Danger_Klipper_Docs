@@ -248,6 +248,19 @@ results were obtained by running an STM32F407 binary on an STM32F446
 | 1 stepper            | 46    |
 | 3 stepper            | 205   |
 
+Running the same binary on a WeAct Blackpill STM32F411 (100&nbsp;MHz
+system clock) produced the following results:
+
+| stm32f411 (Blackpill) | ticks |
+| --------------------- | ----- |
+| 1 stepper             | 78    |
+| 3 stepper             | 344   |
+
+At the 100&nbsp;MHz system frequency this equates to roughly 1.28M
+steps/second with one stepper active and 0.87M steps/second with three
+steppers, matching the entry in the summary table found in
+[Features](Features.md#step-benchmarks).
+
 ### STM32H7 step rate benchmark
 
 The following configuration sequence is used on a STM32H743VIT6:
