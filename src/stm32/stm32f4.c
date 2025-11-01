@@ -18,8 +18,28 @@
  * Clock setup
  ****************************************************************/
 
-#define FREQ_PERIPH_DIV (CONFIG_MACH_STM32F401 ? 2 : 4)
-#define FREQ_PERIPH (CONFIG_CLOCK_FREQ / FREQ_PERIPH_DIV)
+#if CONFIG_MACH_STM32F401
+#define APB1_FREQ (CONFIG_CLOCK_FREQ / 2)
+#define APB2_FREQ (CONFIG_CLOCK_FREQ / 2)
+#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV2
+#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV2
+#elif CONFIG_MACH_STM32F411
+#define APB1_FREQ (CONFIG_CLOCK_FREQ / 2)
+#define APB2_FREQ CONFIG_CLOCK_FREQ
+#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV2
+#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV1
+#elif CONFIG_MACH_STM32F4x5 || CONFIG_MACH_STM32F446
+#define APB1_FREQ (CONFIG_CLOCK_FREQ / 4)
+#define APB2_FREQ (CONFIG_CLOCK_FREQ / 2)
+#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV4
+#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV2
+#else
+#define APB1_FREQ CONFIG_CLOCK_FREQ
+#define APB2_FREQ CONFIG_CLOCK_FREQ
+#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV1
+#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV1
+#endif
+#define AHB_FREQ CONFIG_CLOCK_FREQ
 #define FREQ_USB 48000000
 
 // Map a peripheral address to its enable bits
@@ -45,7 +65,11 @@ lookup_clock_line(uint32_t periph_base)
 uint32_t
 get_pclock_frequency(uint32_t periph_base)
 {
-    return FREQ_PERIPH;
+    if (periph_base >= AHB1PERIPH_BASE)
+        return AHB_FREQ;
+    if (periph_base >= APB2PERIPH_BASE)
+        return APB2_FREQ;
+    return APB1_FREQ;
 }
 
 // Enable a GPIO peripheral clock
@@ -87,17 +111,17 @@ enable_clock_stm32f20x(void)
 static void
 enable_clock_stm32f40x(void)
 {
-#if CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F4x5
+#if CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F4x5 || CONFIG_MACH_STM32F411
     uint32_t pll_base = (CONFIG_STM32_CLOCK_REF_25M) ? 1000000 : 2000000;
-    uint32_t pllp = (CONFIG_MACH_STM32F401) ? 4 : 2;
+    uint32_t pllp = (CONFIG_MACH_STM32F4x5) ? 2 : 4;
     uint32_t pll_freq = CONFIG_CLOCK_FREQ * pllp, pllcfgr;
     if (!CONFIG_STM32_CLOCK_REF_INTERNAL) {
-        // Configure 168Mhz PLL from external crystal (HSE)
+        // Configure PLL from external crystal (HSE)
         uint32_t div = CONFIG_CLOCK_REF_FREQ / pll_base;
         RCC->CR |= RCC_CR_HSEON;
         pllcfgr = RCC_PLLCFGR_PLLSRC_HSE | (div << RCC_PLLCFGR_PLLM_Pos);
     } else {
-        // Configure 168Mhz PLL from internal 16Mhz oscillator (HSI)
+        // Configure PLL from internal 16Mhz oscillator (HSI)
         uint32_t div = 16000000 / pll_base;
         pllcfgr = RCC_PLLCFGR_PLLSRC_HSI | (div << RCC_PLLCFGR_PLLM_Pos);
     }
@@ -172,13 +196,23 @@ clock_setup(void)
     // Configure and enable PLL
     if (CONFIG_MACH_STM32F207)
         enable_clock_stm32f20x();
-    else if (CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F4x5)
+    else if (CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F4x5 || CONFIG_MACH_STM32F411)
         enable_clock_stm32f40x();
     else
         enable_clock_stm32f446();
 
     // Set flash latency
-    FLASH->ACR = (FLASH_ACR_LATENCY_5WS | FLASH_ACR_ICEN | FLASH_ACR_DCEN
+    uint32_t flash_latency = FLASH_ACR_LATENCY_5WS;
+#if CONFIG_MACH_STM32F401
+    flash_latency = FLASH_ACR_LATENCY_2WS;
+#elif CONFIG_MACH_STM32F411
+    flash_latency = FLASH_ACR_LATENCY_3WS;
+#elif CONFIG_MACH_STM32F4x5
+    flash_latency = FLASH_ACR_LATENCY_5WS;
+#elif CONFIG_MACH_STM32F446
+    flash_latency = FLASH_ACR_LATENCY_5WS;
+#endif
+    FLASH->ACR = (flash_latency | FLASH_ACR_ICEN | FLASH_ACR_DCEN
                   | FLASH_ACR_PRFTEN);
 
     // Wait for PLL lock
@@ -186,10 +220,7 @@ clock_setup(void)
         ;
 
     // Switch system clock to PLL
-    if (FREQ_PERIPH_DIV == 2)
-        RCC->CFGR = RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_PPRE2_DIV2 | RCC_CFGR_SW_PLL;
-    else
-        RCC->CFGR = RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV4 | RCC_CFGR_SW_PLL;
+    RCC->CFGR = APB1_PRESCALER | APB2_PRESCALER | RCC_CFGR_SW_PLL;
     while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL)
         ;
 }
