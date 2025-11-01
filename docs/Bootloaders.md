@@ -524,6 +524,17 @@ setting "boot 0" low, "boot 1" high and plugging in the device.  After
 programming is complete unplug the device and set "boot 1" back to low
 so the application will be loaded.
 
+### WeAct Blackpill STM32F411
+
+The WeAct Blackpill exposes the STM32F411 system DFU bootloader via the
+on-board BOOT0 and NRST buttons, so the firmware may be compiled with
+`No bootloader` and flashed directly to 0x08000000 using either
+`make flash` or `dfu-util`. The board also supports flashing over
+USART1 with `stm32flash` and is compatible with the STM32 HID
+bootloader when Kalico is built for a 16&nbsp;KiB offset. Refer to the
+[dedicated Blackpill guide](MCU_WeAct_Blackpill.md) for menuconfig
+recommendations, wiring tips, and detailed flashing sequences.
+
 ## LPC176x micro-controllers (Smoothieboards)
 
 This document does not describe the method to flash a bootloader
