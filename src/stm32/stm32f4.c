@@ -40,6 +40,8 @@
 #define APB2_PRESCALER RCC_CFGR_PPRE2_DIV1
 #endif
 #define AHB_FREQ CONFIG_CLOCK_FREQ
+#define FREQ_PERIPH_DIV ((CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F411) ? 2 : 4)
+#define FREQ_PERIPH (CONFIG_CLOCK_FREQ / FREQ_PERIPH_DIV)
 #define FREQ_USB 48000000
 
 // Map a peripheral address to its enable bits
@@ -111,9 +113,9 @@ enable_clock_stm32f20x(void)
 static void
 enable_clock_stm32f40x(void)
 {
-#if CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F4x5 || CONFIG_MACH_STM32F411
+#if CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F411 || CONFIG_MACH_STM32F4x5
     uint32_t pll_base = (CONFIG_STM32_CLOCK_REF_25M) ? 1000000 : 2000000;
-    uint32_t pllp = (CONFIG_MACH_STM32F4x5) ? 2 : 4;
+    uint32_t pllp = (CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F411) ? 4 : 2;
     uint32_t pll_freq = CONFIG_CLOCK_FREQ * pllp, pllcfgr;
     if (!CONFIG_STM32_CLOCK_REF_INTERNAL) {
         // Configure PLL from external crystal (HSE)
@@ -196,7 +198,7 @@ clock_setup(void)
     // Configure and enable PLL
     if (CONFIG_MACH_STM32F207)
         enable_clock_stm32f20x();
-    else if (CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F4x5 || CONFIG_MACH_STM32F411)
+    else if (CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F411 || CONFIG_MACH_STM32F4x5)
         enable_clock_stm32f40x();
     else
         enable_clock_stm32f446();
