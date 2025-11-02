@@ -369,7 +369,6 @@ choice
         bool "24 MHz crystal"
     config STM32_CLOCK_REF_25M
         bool "25 MHz crystal"
-        default y if MACH_STM32F411
     config STM32_CLOCK_REF_INTERNAL
         bool "Internal clock"
 endchoice

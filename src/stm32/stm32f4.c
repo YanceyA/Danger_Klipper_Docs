@@ -45,12 +45,6 @@ lookup_clock_line(uint32_t periph_base)
 uint32_t
 get_pclock_frequency(uint32_t periph_base)
 {
-#if CONFIG_MACH_STM32F411
-    if (periph_base >= AHB1PERIPH_BASE)
-        return CONFIG_CLOCK_FREQ;
-    if (periph_base >= APB2PERIPH_BASE)
-        return CONFIG_CLOCK_FREQ;
-#endif
     return FREQ_PERIPH;
 }
 
@@ -98,12 +92,12 @@ enable_clock_stm32f40x(void)
     uint32_t pllp = (CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F411) ? 4 : 2;
     uint32_t pll_freq = CONFIG_CLOCK_FREQ * pllp, pllcfgr;
     if (!CONFIG_STM32_CLOCK_REF_INTERNAL) {
-        // Configure PLL from external crystal (HSE)
+        // Configure 168Mhz PLL from external crystal (HSE)
         uint32_t div = CONFIG_CLOCK_REF_FREQ / pll_base;
         RCC->CR |= RCC_CR_HSEON;
         pllcfgr = RCC_PLLCFGR_PLLSRC_HSE | (div << RCC_PLLCFGR_PLLM_Pos);
     } else {
-        // Configure PLL from internal 16Mhz oscillator (HSI)
+        // Configure 168Mhz PLL from internal 16Mhz oscillator (HSI)
         uint32_t div = 16000000 / pll_base;
         pllcfgr = RCC_PLLCFGR_PLLSRC_HSI | (div << RCC_PLLCFGR_PLLM_Pos);
     }
@@ -184,13 +178,7 @@ clock_setup(void)
         enable_clock_stm32f446();
 
     // Set flash latency
-    uint32_t flash_latency = FLASH_ACR_LATENCY_5WS;
-#if CONFIG_MACH_STM32F401
-    flash_latency = FLASH_ACR_LATENCY_2WS;
-#elif CONFIG_MACH_STM32F411
-    flash_latency = FLASH_ACR_LATENCY_3WS;
-#endif
-    FLASH->ACR = (flash_latency | FLASH_ACR_ICEN | FLASH_ACR_DCEN
+    FLASH->ACR = (FLASH_ACR_LATENCY_5WS | FLASH_ACR_ICEN | FLASH_ACR_DCEN
                   | FLASH_ACR_PRFTEN);
 
     // Wait for PLL lock
@@ -198,17 +186,11 @@ clock_setup(void)
         ;
 
     // Switch system clock to PLL
-#if CONFIG_MACH_STM32F411
-    RCC->CFGR = RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_PPRE2_DIV1
-        | RCC_CFGR_SW_PLL;
-#else
     if (FREQ_PERIPH_DIV == 2)
-        RCC->CFGR = RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_PPRE2_DIV2
-            | RCC_CFGR_SW_PLL;
+        // Keep APB domains <=48MHz when the PLL runs at 96MHz
+        RCC->CFGR = RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_PPRE2_DIV2 | RCC_CFGR_SW_PLL;
     else
-        RCC->CFGR = RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV4
-            | RCC_CFGR_SW_PLL;
-#endif
+        RCC->CFGR = RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV4 | RCC_CFGR_SW_PLL;
     while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL)
         ;
 }
