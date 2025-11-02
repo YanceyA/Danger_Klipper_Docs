@@ -17,7 +17,7 @@ DECL_ENUMERATION_RANGE("pin", "PC0", GPIO('C', 0), 16);
 #ifdef GPIOD
 DECL_ENUMERATION_RANGE("pin", "PD0", GPIO('D', 0), 16);
 #endif
-#if defined(GPIOE) && !CONFIG_MACH_STM32F411
+#ifdef GPIOE
 DECL_ENUMERATION_RANGE("pin", "PE0", GPIO('E', 0), 16);
 #endif
 #ifdef GPIOF
@@ -38,7 +38,7 @@ GPIO_TypeDef * const digital_regs[] = {
 #ifdef GPIOD
     ['D' - 'A'] = GPIOD,
 #endif
-#if defined(GPIOE) && !CONFIG_MACH_STM32F411
+#ifdef GPIOE
     ['E' - 'A'] = GPIOE,
 #endif
 #ifdef GPIOF

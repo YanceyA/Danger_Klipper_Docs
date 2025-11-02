@@ -341,10 +341,6 @@ following command:
 If attempting to flash via 3.3V serial, then use:
   make serialflash FLASH_DEVICE=%s
 
-For STM32F411 boards such as the Blackpill, the runtime USB serial
-interface typically enumerates as 0483:5740 while the DFU bootloader
-enumerates as 0483:df11.
-
 """
 
 

@@ -18,28 +18,6 @@
  * Clock setup
  ****************************************************************/
 
-#if CONFIG_MACH_STM32F401
-#define APB1_FREQ (CONFIG_CLOCK_FREQ / 2)
-#define APB2_FREQ (CONFIG_CLOCK_FREQ / 2)
-#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV2
-#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV2
-#elif CONFIG_MACH_STM32F411
-#define APB1_FREQ (CONFIG_CLOCK_FREQ / 2)
-#define APB2_FREQ CONFIG_CLOCK_FREQ
-#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV2
-#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV1
-#elif CONFIG_MACH_STM32F4x5 || CONFIG_MACH_STM32F446
-#define APB1_FREQ (CONFIG_CLOCK_FREQ / 4)
-#define APB2_FREQ (CONFIG_CLOCK_FREQ / 2)
-#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV4
-#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV2
-#else
-#define APB1_FREQ CONFIG_CLOCK_FREQ
-#define APB2_FREQ CONFIG_CLOCK_FREQ
-#define APB1_PRESCALER RCC_CFGR_PPRE1_DIV1
-#define APB2_PRESCALER RCC_CFGR_PPRE2_DIV1
-#endif
-#define AHB_FREQ CONFIG_CLOCK_FREQ
 #define FREQ_PERIPH_DIV ((CONFIG_MACH_STM32F401 || CONFIG_MACH_STM32F411) ? 2 : 4)
 #define FREQ_PERIPH (CONFIG_CLOCK_FREQ / FREQ_PERIPH_DIV)
 #define FREQ_USB 48000000
@@ -67,11 +45,13 @@ lookup_clock_line(uint32_t periph_base)
 uint32_t
 get_pclock_frequency(uint32_t periph_base)
 {
+#if CONFIG_MACH_STM32F411
     if (periph_base >= AHB1PERIPH_BASE)
-        return AHB_FREQ;
+        return CONFIG_CLOCK_FREQ;
     if (periph_base >= APB2PERIPH_BASE)
-        return APB2_FREQ;
-    return APB1_FREQ;
+        return CONFIG_CLOCK_FREQ;
+#endif
+    return FREQ_PERIPH;
 }
 
 // Enable a GPIO peripheral clock
@@ -209,10 +189,6 @@ clock_setup(void)
     flash_latency = FLASH_ACR_LATENCY_2WS;
 #elif CONFIG_MACH_STM32F411
     flash_latency = FLASH_ACR_LATENCY_3WS;
-#elif CONFIG_MACH_STM32F4x5
-    flash_latency = FLASH_ACR_LATENCY_5WS;
-#elif CONFIG_MACH_STM32F446
-    flash_latency = FLASH_ACR_LATENCY_5WS;
 #endif
     FLASH->ACR = (flash_latency | FLASH_ACR_ICEN | FLASH_ACR_DCEN
                   | FLASH_ACR_PRFTEN);
@@ -222,7 +198,17 @@ clock_setup(void)
         ;
 
     // Switch system clock to PLL
-    RCC->CFGR = APB1_PRESCALER | APB2_PRESCALER | RCC_CFGR_SW_PLL;
+#if CONFIG_MACH_STM32F411
+    RCC->CFGR = RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_PPRE2_DIV1
+        | RCC_CFGR_SW_PLL;
+#else
+    if (FREQ_PERIPH_DIV == 2)
+        RCC->CFGR = RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_PPRE2_DIV2
+            | RCC_CFGR_SW_PLL;
+    else
+        RCC->CFGR = RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV4
+            | RCC_CFGR_SW_PLL;
+#endif
     while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL)
         ;
 }
