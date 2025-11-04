@@ -210,7 +210,7 @@ config CLOCK_FREQ
     default 72000000 if MACH_STM32F103
     default 120000000 if MACH_STM32F207
     default 84000000 if MACH_STM32F401
-    default 96000000 if MACH_STM32F411
+    default 84000000 if MACH_STM32F411
     default 168000000 if MACH_STM32F4x5
     default 180000000 if MACH_STM32F446
     default 216000000 if MACH_STM32F765
@@ -429,11 +429,11 @@ choice
         select SERIAL
     config STM32_SERIAL_USART3
         bool "Serial (on USART3 PB11/PB10)" if LOW_LEVEL_OPTIONS
-        depends on !MACH_STM32F0 && !MACH_STM32F401
+        depends on !MACH_STM32F0 && !MACH_STM32F401 && !MACH_STM32F411
         select SERIAL
     config STM32_SERIAL_USART3_ALT_PD9_PD8
         bool "Serial (on USART3 PD9/PD8)" if LOW_LEVEL_OPTIONS
-        depends on !MACH_STM32F0 && !MACH_STM32F401
+        depends on !MACH_STM32F0 && !MACH_STM32F401 && !MACH_STM32F411
         select SERIAL
     config STM32_SERIAL_USART3_ALT_PC11_PC10
         bool "Serial (on USART3 PC11/PC10)" if LOW_LEVEL_OPTIONS
@@ -448,10 +448,10 @@ choice
         depends on MACH_STM32G0Bx
         select SERIAL
     config STM32_SERIAL_USART6
-        bool "Serial (on USART6 PA12/PA11)" if LOW_LEVEL_OPTIONS && MACH_STM32F401
+        bool "Serial (on USART6 PA12/PA11)" if LOW_LEVEL_OPTIONS && (MACH_STM32F401 || MACH_STM32F411)
         select SERIAL
     config STM32_SERIAL_USART6_ALT_PC7_PC6
-        bool "Serial (on USART6 PC7/PC6)" if LOW_LEVEL_OPTIONS && MACH_STM32F401
+        bool "Serial (on USART6 PC7/PC6)" if LOW_LEVEL_OPTIONS && (MACH_STM32F401 || MACH_STM32F411)
         select SERIAL
     config STM32_CANBUS_PA11_PA12
         bool "CAN bus (on PA11/PA12)"

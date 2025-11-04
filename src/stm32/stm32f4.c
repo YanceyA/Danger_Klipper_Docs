@@ -187,7 +187,6 @@ clock_setup(void)
 
     // Switch system clock to PLL
     if (FREQ_PERIPH_DIV == 2)
-        // Keep APB domains <=48MHz when the PLL runs at 96MHz
         RCC->CFGR = RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_PPRE2_DIV2 | RCC_CFGR_SW_PLL;
     else
         RCC->CFGR = RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV4 | RCC_CFGR_SW_PLL;
