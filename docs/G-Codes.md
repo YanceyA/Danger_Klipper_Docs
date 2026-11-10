@@ -2113,6 +2113,34 @@ The velocity argument is not available on CoreXY. With no arguments, this
 command responds with the movement direction with the most acceleration or
 velocity.
 
+#### ⚠️ COREXY_HOMING_CALIBRATE
+
+`COREXY_HOMING_CALIBRATE [SAMPLES=<count>]`: Calibrate the phase
+origin used by
+[precise homing on CoreXY](TMC_Drivers.md#precise-homing-on-corexy).
+X and Y must be homed first. The command runs the precise homing
+measurement SAMPLES times (the default is 5, the minimum is 2) from
+start positions a whole number of electrical cycles apart, and
+reports each result as `cycles A <value> B <value>`, the position of
+the corner relative to the start position in electrical cycles of
+stepper_x (A) and stepper_y (B). The whole numbers differ between
+samples; the fractional parts should agree. If any fractional part
+is more than 0.15 cycle from the mean, the command fails with "corexy
+precise homing: not repeatable; check sensorless homing tuning" and
+the origin is not changed. Otherwise the new origin is used
+immediately, X and Y are left homed relative to it, and the value is
+staged for
+`corexy_precise_homing_origin` in the
+[printer config section](Config_Reference.md#corexy-kinematics). Use
+SAVE_CONFIG to store it in the config file; without it the new origin
+is lost on the next restart. Like G28, this command discards any G92
+offset on X and Y. If a measurement fails, X and Y are left unhomed.
+
+This command is only available when `kinematics` is set to either
+[`corexy`](./Config_Reference.md#corexy-kinematics) or
+[`limited_corexy`](./Config_Reference.md#corexy-kinematics-with-limits-for-x-and-y-axes)
+and `corexy_precise_homing` is enabled.
+
 ### ⚠️ [tools_calibrate]
 
 The following commands are available when the
