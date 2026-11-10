@@ -11,6 +11,8 @@ from klippy.extras import endstop_phase, homing
 
 PROBES_PER_WALL = 2  # last wall probes that must not be early and agree
 PROBE_RETRIES = 3  # extra wall probes allowed before giving up
+MAX_PHASE_ERROR = 0.25  # cycles off the grid at which a measurement fails
+WARN_PHASE_ERROR = 0.15  # cycles off the grid that draw a warning
 # Whole-cycle AB offsets that COREXY_HOMING_CALIBRATE samples at
 CAL_GRID = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
 
@@ -66,7 +68,7 @@ class CoreXYKinematics:
         self.toolhead = toolhead
         self.precise_homing = config.getboolean("corexy_precise_homing", False)
         self.precise_offset = config.getfloat(
-            "corexy_precise_homing_offset", 5.0, above=0.0
+            "corexy_precise_homing_offset", 5.0, minval=3.0
         )
         self.precise_origin = config.getfloatlist(
             "corexy_precise_homing_origin", None, count=2
@@ -122,6 +124,7 @@ class CoreXYKinematics:
             rail.set_position(newpos)
             if "xyz"[i] in homing_axes:
                 self.limits[i] = rail.get_range()
+                self.precise_axes.discard(i)
 
     def note_z_not_homed(self):
         self.clear_homing_state("z")
@@ -134,6 +137,7 @@ class CoreXYKinematics:
 
     def home(self, homing_state):
         # Each axis is homed independently and in order
+        self.precise_axes.difference_update(homing_state.get_axes())
         for axis in homing_state.get_axes():
             rail = self.rails[axis]
             # Determine movement
@@ -148,13 +152,13 @@ class CoreXYKinematics:
                 forcepos[axis] += 1.5 * (position_max - hi.position_endstop)
             # Perform homing
             homing_state.home_rails([rail], forcepos, homepos)
-            # Snap XY once both X and Y have been homed here (before any Z)
+            # Snap XY as soon as both X and Y hold a position found by homing
             self.precise_axes.add(axis)
             if self.precise_homing and {0, 1} <= self.precise_axes:
                 self.precise_axes.clear()
                 if self.precise_origin is None:
                     self.printer.lookup_object("gcode").respond_info(
-                        "corexy precise homing is not calibrated;"
+                        "corexy precise homing: not calibrated;"
                         " run COREXY_HOMING_CALIBRATE"
                     )
                 else:
@@ -199,7 +203,7 @@ class CoreXYKinematics:
             nudge.append(steps * s.get_step_dist())
         self._move_ab(*nudge, speed)
         start = toolhead.get_position()
-        m = 1 if his[0].positive_dir == his[1].positive_dir else 0
+        m = int(dirs[0] == dirs[1])
         rail, s = DiagonalProbeRail(self.rails[m]), steppers[m]
         start_mcu = s.get_mcu_position()
         dists = []
@@ -212,7 +216,7 @@ class CoreXYKinematics:
             forcepos = start[:2] + [None]
             forcepos[wall] = his[wall].position_endstop - vec[wall]
             movepos = [forcepos[0] + vec[0], forcepos[1] + vec[1], None]
-            early = abs(his[wall].position_endstop - start[wall])
+            min_dist = abs(his[wall].position_endstop - start[wall])
             samples = []
             for _ in range(PROBES_PER_WALL + PROBE_RETRIES):
                 homing_state.home_rails([rail], forcepos, movepos)
@@ -225,8 +229,8 @@ class CoreXYKinematics:
                 last = samples[-PROBES_PER_WALL:]
                 if (
                     len(last) == PROBES_PER_WALL
-                    and min(last) > early
-                    and max(last) - min(last) <= 0.25 * cycles[m]
+                    and min(last) > min_dist
+                    and max(last) - min(last) <= MAX_PHASE_ERROR * cycles[m]
                 ):
                     dists.append(sum(last) / PROBES_PER_WALL)
                     break
@@ -244,13 +248,15 @@ class CoreXYKinematics:
         rel = [ci - oi for ci, oi in zip(c, self.precise_origin)]
         n = [round(r) for r in rel]
         drift = max(abs(r - ni) for r, ni in zip(rel, n))
-        if drift > 0.25:
+        if drift > MAX_PHASE_ERROR:
+            # Forget the origin, so that the next home can be calibrated from
+            origin, self.precise_origin = self.precise_origin, None
             raise self.printer.command_error(
-                "corexy precise homing: phase origin unstable (cycles A %.3f"
-                " B %.3f, origin A %.3f B %.3f); run COREXY_HOMING_CALIBRATE"
-                % (c[0], c[1], self.precise_origin[0], self.precise_origin[1])
+                "corexy precise homing: cycles A %.3f B %.3f do not match"
+                " origin %.3f, %.3f; home again and run COREXY_HOMING_CALIBRATE"
+                % (*c, *origin)
             )
-        if drift > 0.15:
+        if drift > WARN_PHASE_ERROR:
             self.printer.lookup_object("gcode").respond_info(
                 "corexy precise homing: phase origin has drifted %.2f cycles;"
                 " consider running COREXY_HOMING_CALIBRATE" % (drift,)
@@ -269,12 +275,12 @@ class CoreXYKinematics:
     def cmd_COREXY_HOMING_CALIBRATE(self, gcmd):
         if any(lo > hi for lo, hi in self.limits[:2]):
             raise gcmd.error("Must home X and Y first")
-        samples = gcmd.get_int("SAMPLES", 5, minval=2)
+        count = gcmd.get_int("SAMPLES", 5, minval=2)
         homing_state = homing.Homing(self.printer, gcmd)
         homing_state.set_axes([0, 1])
         results = []
         try:
-            for i in range(samples):
+            for i in range(count):
                 grid = CAL_GRID[i % len(CAL_GRID)]
                 c, cycles = self._measure_cycles(homing_state, grid)
                 results.append(c)
@@ -287,10 +293,11 @@ class CoreXYKinematics:
         for vals in zip(*results):
             angles = [2.0 * math.pi * v for v in vals]
             sin, cos = sum(map(math.sin, angles)), sum(map(math.cos, angles))
-            o = math.atan2(sin, cos) / (2.0 * math.pi)
-            if max(abs((v - o + 0.5) % 1.0 - 0.5) for v in vals) > 0.25:
+            o = round(math.atan2(sin, cos) / (2.0 * math.pi), 3) + 0.0
+            spread = max(abs((v - o + 0.5) % 1.0 - 0.5) for v in vals)
+            if spread > WARN_PHASE_ERROR:
                 raise gcmd.error(
-                    "corexy precise homing not repeatable; check sensorless"
+                    "corexy precise homing: not repeatable; check sensorless"
                     " homing tuning"
                 )
             origin.append(o)

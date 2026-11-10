@@ -223,8 +223,9 @@ def test_snap_home_rounding(c, origin, n, warn):
     m, kin = classic_homed((-1, 1))
     kin.precise_origin = origin
     if n is None:
-        with pytest.raises(CommandError, match="unstable"):
+        with pytest.raises(CommandError, match="do not match origin"):
             kin._snap_home(c, [CYCLE, CYCLE])
+        assert kin.precise_origin is None  # the next home can recalibrate
         return
     kin._snap_home(c, [CYCLE, CYCLE])
     a, b = n[0] * CYCLE, n[1] * CYCLE
@@ -273,6 +274,13 @@ def test_home_snaps_only_after_x_and_y():
     assert len(m.probes) == 4  # G28 Y then G28 X snaps once
     kin.home(m)
     assert len(m.probes) == 4  # Y not homed since the snap
+    m.axes = [1]
+    kin.home(m)
+    assert len(m.probes) == 8  # G28 X then G28 Y snaps once
+    kin.home(m)
+    m.axes = [0, 1]
+    kin.home(m)  # Y alone, then both: snaps after Y is homed again
+    assert len(m.probes) == 12 and not kin.precise_axes
 
 
 @pytest.mark.parametrize(
