@@ -418,162 +418,43 @@ gcode:
 
 ### ⚠️ Precise homing on CoreXY
 
-Sensorless homing on CoreXY can be poorly repeatable. Every X or Y
-homing move drives both motors, and the stall that ends the move is
-detected by one driver while the other motor is also pushing, at
-whatever electrical phase the two motors happen to be in. Kalico can
-optionally refine the regular sensorless home of X and Y by snapping
-it to the electrical cycles of the motors. The method is based on
-Prusa's Buddy firmware.
+Sensorless homing detects the axis limit a little earlier or later on
+each home. Precise homing is an optional extra step on CoreXY printers
+that is intended to remove this difference. After the regular home of
+X and Y, a single motor moves the toolhead diagonally against the X
+axis limit and then the Y axis limit. The position found is rounded to
+a whole number of motor "electrical cycles" (four full steps, which is
+0.8mm of belt with a 1.8 degree motor and `rotation_distance: 40`)
+from an origin that is calibrated once.
 
-An electrical cycle of a stepper motor is four full steps. For
-example, with a 1.8 degree motor and a 20 tooth GT2 pulley
-(`rotation_distance: 40`) one cycle is 0.8mm of belt. The hard stops
-do not move relative to the motors, so the corner of the X and Y
-walls is always at the same place within the electrical cycles of
-both motors, even though the point at which a stall is detected
-varies. After X and Y have been homed the regular way, precise
-homing:
+Precise homing requires TMC drivers and sensorless homing on both
+`stepper_x` and `stepper_y`, tuned as described above. It cannot be
+used with an `[endstop_phase stepper_x]` or
+`[endstop_phase stepper_y]` config section.
 
-1. Parks the toolhead `corexy_precise_homing_offset` mm from both the
-   X and the Y wall, and moves both motors onto the start of an
-   electrical cycle.
-2. Drives one motor alone, which moves the toolhead along a 45 degree
-   diagonal, into the X wall and then into the Y wall. Only the stall
-   detection of that motor is used: `stepper_y` if X and Y home in the
-   same direction, otherwise `stepper_x`. Each wall is probed at least
-   twice, until two successive probes agree within a quarter of a
-   cycle and neither triggered early, with up to three extra probes
-   per wall.
-3. Calculates from the two travel distances where the corner is in
-   electrical cycles of each motor, rounds that to a whole number of
-   cycles and sets the toolhead position accordingly.
+To use it, add the following to the config file:
+```
+[printer]
+corexy_precise_homing: True
+...
+```
 
-The rounding discards differences of up to about a quarter of a cycle
-in where the stall is detected, so the homed position does not depend
-on them.
-
-The fractional part of the measured number of cycles depends on where
-the hard stops are relative to the motor phases, and is a constant of
-the machine. If it were close to one half, rounding would alternate
-between two whole numbers from one home to the next. It is therefore
-measured once with
+Then RESTART the printer and run `G28`, followed by
 [COREXY_HOMING_CALIBRATE](G-Codes.md#corexy_homing_calibrate) and
-stored as `corexy_precise_homing_origin`, and rounding is done
-relative to it. The origin only sets where the rounding happens:
-every home still measures both walls, and if the measured fraction is
-more than a quarter of a cycle from the origin the home fails rather
-than risk rounding to a different whole number of cycles.
+`SAVE_CONFIG`. Until it has been calibrated, X and Y are homed as
+before.
 
-#### Requirements
+Precise homing is done once both X and Y have been homed, by one `G28`
+or by separate `G28 X` and `G28 Y` commands. If only one of them is
+homed again later, that axis is homed as before.
 
-- TMC drivers on `stepper_x` and `stepper_y`.
-- Sensorless homing on both `stepper_x` and `stepper_y` (a
-  `virtual_endstop` endstop_pin or `use_sensorless_homing: True`),
-  tuned as described above, including the CoreXY tips. The probes
-  rely on the same stall detection settings as the regular home.
-- No `[endstop_phase stepper_x]` or `[endstop_phase stepper_y]`
-  section; Kalico reports a config error if either is present. A
-  bare `[endstop_phase]` section may be used for other steppers, but
-  its statistics for the probing motor include the diagonal probes,
-  and saving ENDSTOP_PHASE_CALIBRATE results for `stepper_x` or
-  `stepper_y` adds a section that precise homing refuses.
-- Room to probe: the X and Y axes should each be longer than about
-  three times `corexy_precise_homing_offset`, and the offset should be
-  several electrical cycles (the default of 5mm is about six cycles
-  with the 0.8mm example above).
-- No `hold_current` on `stepper_x` or `stepper_y` (see the CoreXY
-  tips above): one motor stands still during each probe and has to
-  hold against the other.
+The home position can shift slightly after each calibration, so check
+any positions that have to be exact (for example, a probe dock).
 
-#### Setting up precise homing
-
-1. Tune sensorless homing for X and Y as described above.
-2. Add `corexy_precise_homing: True` to the `[printer]` section (see
-   the [config reference](Config_Reference.md#corexy-kinematics)) and
-   restart.
-3. Home with `G28`. Until it is calibrated, XY homing works as before
-   and each XY home reports "corexy precise homing: not calibrated;
-   run COREXY_HOMING_CALIBRATE".
-4. Run `COREXY_HOMING_CALIBRATE`. It measures several times and
-   reports the result of each measurement. If the measurements do not
-   agree it fails with "corexy precise homing: not repeatable; check
-   sensorless homing tuning".
-5. Run `SAVE_CONFIG` to store `corexy_precise_homing_origin` in the
-   config file (this also restarts the printer).
-6. Check any settings that depend on absolute X and Y positions (see
-   below).
-
-Run `COREXY_HOMING_CALIBRATE` and `SAVE_CONFIG` again after any
-mechanical change that can move the hard stops relative to the
-motors: belts replaced or retensioned, pulleys or motors changed or
-moved, or the frame or the hard stops themselves changed. Also
-recalibrate after changing the homing direction of `stepper_x` or
-`stepper_y`.
-
-#### Behavior
-
-- Precise homing runs once both X and Y have been homed, either in a
-  single `G28` or by separate `G28 X` and `G28 Y` commands (as
-  `[safe_z_home]` and homing_override macros may do). When the same
-  `G28` also homes Z, it runs before Z is homed. SET_KINEMATIC_POSITION
-  does not count as homing, and an axis it marks as homed (by default
-  all of them, even when only `Z` is given) has to be homed again
-  before precise homing runs.
-- After a precise home, homing only X or only Y homes that axis the
-  regular way without snapping. That axis is then back to ordinary
-  sensorless accuracy until the other axis is homed as well, which
-  runs precise homing again.
-- The probes are homing moves. During each probe both motors use
-  their `home_current` (if set), and the probing motor's
-  `homing_accel` and stall detection settings are used. The toolhead
-  moves at the probing motor's `homing_speed` divided by the square
-  root of two, so that the motor turns at the same rate as in a
-  regular home. The park move and the moves between probes use the
-  `homing_retract_speed` of `stepper_x`. No retract or second homing
-  move is done after a probe, regardless of `homing_retract_dist` and
-  `min_home_dist`.
-- Homing takes longer: there are at least four probes, and when a
-  `home_current` that differs from the run current is set each probe
-  has the `current_change_dwell_time` before and after it.
-- After a successful home the toolhead is left about
-  `corexy_precise_homing_offset` mm from both walls, not at the
-  position of a regular home.
-- The homed position can differ from that of a regular sensorless
-  home by a constant amount of up to about half a cycle per motor.
-  Check any settings that depend on absolute X and Y positions (such
-  as probe or dock positions, `[safe_z_home]` positions and bed mesh
-  coordinates) after enabling precise homing and after each
-  recalibration.
-
-#### Messages
-
-- "corexy precise homing: not calibrated; run
-  COREXY_HOMING_CALIBRATE": `corexy_precise_homing_origin` is not
-  set. The home succeeds with the regular sensorless position.
-- "corexy precise homing: phase origin has drifted N cycles; consider
-  running COREXY_HOMING_CALIBRATE": the measurement is more than 0.15
-  cycle from the origin. The home succeeds, but the machine is getting
-  close to the limit. Check the mechanics and recalibrate.
-- "corexy precise homing: cycles A ... B ... do not match origin
-  ...; home again and run COREXY_HOMING_CALIBRATE": the measurement is
-  more than a quarter of a cycle from the origin. The `G28` fails and,
-  as with any failed `G28`, the motors are disabled. The origin is
-  then ignored until the next restart, so that the next `G28` is a
-  regular home (reporting "not calibrated"). Check the mechanics, then
-  run `G28`, `COREXY_HOMING_CALIBRATE` and `SAVE_CONFIG`.
-- "corexy precise homing: inconsistent X wall probes (...)" (or Y):
-  the probes of that wall triggered early, or no two successive
-  probes agreed within a quarter of a cycle. The values are the motor
-  travel of each probe in mm. Check the sensorless homing tuning
-  (sensitivity, `home_current`, `homing_speed`) and the mechanics.
-- "No trigger on y after full movement" (or `x`) during the probes:
-  the stall of the probing motor (`stepper_y` or `stepper_x`) was not
-  detected. Check the sensorless homing tuning.
-- "Stepper stepper_x phase unknown" (or `stepper_y`): Kalico does not
-  know the motor phase of that TMC driver, for example because it
-  could not be read or the driver was reset. Check the driver's UART
-  or SPI connection and power.
+Run `COREXY_HOMING_CALIBRATE` and `SAVE_CONFIG` again after a change
+to the belts or their tension, the pulleys, the motors or the frame.
+If a home fails with a message that it does not match the origin, run
+`G28` again and then recalibrate.
 
 ## Querying and diagnosing driver settings
 

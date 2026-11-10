@@ -622,8 +622,7 @@ Only parameters specific to corexy printers are described here - see
 parameters.
 
 See [precise homing on CoreXY](TMC_Drivers.md#precise-homing-on-corexy)
-and the [COREXY_HOMING_CALIBRATE](G-Codes.md#corexy_homing_calibrate)
-command for details on the `corexy_precise_homing` options.
+for information on the `corexy_precise_homing` options.
 
 ```
 [printer]
@@ -638,27 +637,16 @@ max_z_accel:
 #   the z axis. It limits the acceleration of the z stepper motor. The
 #   default is to use max_accel for max_z_accel.
 #⚠️ corexy_precise_homing: False
-#   If true, the regular sensorless home of X and Y is followed by
-#   single motor probes of the X and Y walls, and the XY home position
-#   is snapped to a whole number of electrical cycles (4 full steps)
-#   of each motor. This requires TMC drivers and sensorless homing on
-#   stepper_x and stepper_y, and cannot be combined with
-#   [endstop_phase stepper_x] or [endstop_phase stepper_y]. Until
-#   corexy_precise_homing_origin is set, the regular XY home is kept.
-#   The default is False.
+#   If true, precise homing is done after the sensorless home of X and
+#   Y. The default is False.
 #⚠️ corexy_precise_homing_offset: 5.0
-#   Distance (in mm) from the X and Y walls at which the toolhead is
-#   parked for the precise homing probes. The toolhead is also left
-#   about this far from both walls after homing. This should be
-#   several electrical cycles (the minimum is 3mm), and the X and Y
-#   axes should each be longer than about three times this distance.
-#   The default is 5mm.
+#   Distance (in mm) from the X and Y endstops at which precise homing
+#   starts its measurement. The toolhead is left about this far from
+#   both endstops after homing. The default is 5mm.
 #⚠️ corexy_precise_homing_origin:
-#   The calibrated phase origin of stepper_x and stepper_y, as two
-#   comma separated values in fractions of an electrical cycle. This
-#   is normally set by running COREXY_HOMING_CALIBRATE followed by
-#   SAVE_CONFIG. The default is to not be calibrated, in which case
-#   the regular XY home is kept.
+#   The origin used by precise homing. This is measured by the
+#   COREXY_HOMING_CALIBRATE command; it should not normally be set by
+#   hand.
 
 # The stepper_x section is used to describe the X axis as well as the
 # stepper controlling the X+Y movement.
@@ -680,9 +668,6 @@ for X and Y axis.
 
 There is no velocity limits for X and Y, since on a CoreXY the pull-out velocity
 are identical on both axes.
-
-The `corexy_precise_homing` options of CoreXY kinematics are also
-available.
 
 
 ```
