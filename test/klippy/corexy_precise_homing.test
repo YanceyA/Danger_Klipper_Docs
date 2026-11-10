@@ -1,0 +1,27 @@
+# Tests for corexy precise (phase snapped) homing
+DICTIONARY atmega2560.dict
+CONFIG corexy_precise_homing.cfg
+CONFIG corexy_precise_homing_opposite.cfg
+
+; Full home; snaps XY (or prints the not calibrated notice)
+G28
+G90
+G1 F6000
+G1 X100 Y100 Z5
+
+; X and Y homed by separate commands also snap
+G28 X
+G28 Y
+G1 X50 Y150
+
+; Calibrate, then home again with the staged origin
+COREXY_HOMING_CALIBRATE
+COREXY_HOMING_CALIBRATE SAMPLES=6
+G1 X120 Y60
+G28 X Y
+G1 X10 Y10
+
+; Motors off and re-home
+M18
+G28
+G1 X150 Y150 Z1

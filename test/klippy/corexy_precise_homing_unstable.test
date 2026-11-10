@@ -1,0 +1,6 @@
+# Precise homing must refuse a phase half a cycle off the origin
+DICTIONARY atmega2560.dict
+CONFIG corexy_precise_homing_unstable.cfg
+SHOULD_FAIL
+
+G28
