@@ -1,0 +1,1076 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CoreXY Precise Homing</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap">
+<style>
+/* Layout: one reading column of numbered-by-topic sections; the simulator breaks out to a two-pane bench (machine left, instruments right). */
+:root {
+  --bg: #F1F3F6; --surface: #FFFFFF; --sunk: #E8ECF1; --ink: #17202C; --muted: #566273; --line: #D3D9E2;
+  --a: #3B4CCA; --b: #BF5408; --ok: #1B7A4B; --warn: #946500; --err: #BE2238;
+  --ok-bg: #DDF1E6; --warn-bg: #F8ECC9; --err-bg: #FADFE3;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11151B; --surface: #1A2029; --sunk: #0C1015; --ink: #E5E9EF; --muted: #98A4B4; --line: #2D3644;
+  --a: #93A0FF; --b: #F59A4A; --ok: #55CC8E; --warn: #E3B341; --err: #FF7586;
+  --ok-bg: #143324; --warn-bg: #3A2E0C; --err-bg: #401A21; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11151B; --surface: #1A2029; --sunk: #0C1015; --ink: #E5E9EF; --muted: #98A4B4; --line: #2D3644;
+  --a: #93A0FF; --b: #F59A4A; --ok: #55CC8E; --warn: #E3B341; --err: #FF7586;
+  --ok-bg: #143324; --warn-bg: #3A2E0C; --err-bg: #401A21; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--body); -webkit-text-size-adjust: 100% }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 36px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; text-wrap: balance; margin: 0; line-height: 1.15 }
+h1 { font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -0.01em }
+h2 { font-size: 1.7rem; padding-top: 28px; border-top: 2px solid var(--ink) }
+h3 { font-size: 1.15rem; margin-top: 8px }
+p { margin: 0; max-width: 70ch }
+a { color: inherit; text-decoration-color: var(--muted); text-underline-offset: 3px }
+a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--a); outline-offset: 2px }
+code, .mono { font-family: var(--mono); font-size: 0.875em }
+code { background: var(--sunk); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere }
+section { display: flex; flex-direction: column; gap: 16px; margin-top: 52px; scroll-margin-top: 16px }
+.eyebrow { font: 500 0.8rem/1.4 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted) }
+header { display: flex; flex-direction: column; gap: 14px }
+.lede { font-size: 1.15rem; max-width: 62ch }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 4px 0 0; padding: 14px 0 0; border-top: 1px solid var(--line) }
+.facts div { display: flex; flex-direction: column }
+.facts dt { font: 500 0.72rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted) }
+.facts dd { margin: 0; font-weight: 500 }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.92rem; margin-top: 6px }
+.ma { color: var(--a); font-weight: 600 } .mb { color: var(--b); font-weight: 600 }
+
+figure { margin: 0; display: flex; flex-direction: column; gap: 8px }
+figcaption { font-size: 0.88rem; color: var(--muted); max-width: 78ch }
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px }
+.scroll > svg { display: block; width: 100%; min-width: 600px; height: auto }
+svg text { font-family: var(--mono); fill: var(--muted); font-size: 12px }
+svg .t-ink { fill: var(--ink) } svg .t-a { fill: var(--a) } svg .t-b { fill: var(--b) } svg .t-ok { fill: var(--ok) } svg .t-err { fill: var(--err) }
+.s-ink { stroke: var(--ink) } .s-muted { stroke: var(--muted) } .s-line { stroke: var(--line) } .s-a { stroke: var(--a) } .s-b { stroke: var(--b) }
+.s-ok { stroke: var(--ok) } .s-warn { stroke: var(--warn) } .s-err { stroke: var(--err) }
+.f-ink { fill: var(--ink) } .f-muted { fill: var(--muted) } .f-surface { fill: var(--surface) } .f-sunk { fill: var(--sunk) } .f-a { fill: var(--a) } .f-b { fill: var(--b) }
+.f-ok { fill: var(--ok) } .f-warn { fill: var(--warn) } .f-err { fill: var(--err) } .f-none { fill: none }
+
+.two { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; align-items: start }
+.two > * { min-width: 0 }
+.stack { display: flex; flex-direction: column; gap: 14px; min-width: 0 }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; min-width: 0 }
+.ctl { display: flex; flex-direction: column; gap: 4px; font-size: 0.88rem; min-width: 0 }
+.ctl label { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; color: var(--muted) }
+.ctl output { font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap }
+.ctl input[type=range] { width: 100%; accent-color: var(--ink); margin: 0 }
+.ctl select, .ctl input[type=number] { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); width: 100% }
+.ctl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 22px }
+.btns { display: flex; flex-wrap: wrap; gap: 8px }
+.btn { font: 500 0.88rem var(--body); padding: 8px 13px; border: 1px solid var(--muted); border-radius: 4px; background: var(--surface); color: var(--ink); cursor: pointer }
+.btn:hover { border-color: var(--ink) } .btn:disabled { opacity: 0.4; cursor: default }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+.btn.cmd { font-family: var(--mono); font-size: 0.8rem }
+.pill { display: inline-block; font: 600 0.74rem var(--mono); letter-spacing: 0.04em; padding: 2px 8px; border-radius: 99px; white-space: nowrap }
+.pill.ok { background: var(--ok-bg); color: var(--ok) } .pill.warn { background: var(--warn-bg); color: var(--warn) } .pill.err { background: var(--err-bg); color: var(--err) }
+.pill.off { background: var(--sunk); color: var(--muted) }
+
+/* simulator */
+.bench { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 18px; align-items: start }
+.bench > * { min-width: 0 }
+.plot { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow: hidden }
+.plot svg { display: block; width: 100%; height: auto }
+.plot-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 0.85rem }
+.plot-h b { font-family: var(--display); font-size: 1rem; font-weight: 600 }
+.plot-h span { color: var(--muted) }
+.legend { display: flex; flex-wrap: wrap; gap: 5px 16px; font-size: 0.8rem; color: var(--muted); padding: 9px 12px; border-top: 1px solid var(--line) }
+.legend i { display: inline-block; width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px; border-radius: 50% }
+.dials { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+.dial { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; text-align: center; font-size: 0.82rem }
+.dial svg { width: 104px; height: 104px }
+.dial .nm { font-family: var(--display); font-weight: 600; font-size: 1rem }
+.dial .st { font-family: var(--mono); font-size: 0.74rem; color: var(--muted) }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { font: 500 0.82rem var(--body); padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); cursor: pointer }
+.chip b { font-family: var(--mono); font-weight: 600; margin-right: 5px; color: var(--muted) }
+.chip[aria-current="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink) } .chip[aria-current="true"] b { color: var(--bg) }
+.chip:disabled { opacity: 0.35; cursor: default } .chip.bad { border-color: var(--err); color: var(--err) }
+.steprow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between }
+.code { background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; margin: 0; padding: 12px 0; font: 400 0.78rem/1.55 var(--mono) }
+.code div { white-space: pre; padding: 0 14px 0 0 }
+.code i { display: inline-block; width: 44px; padding-right: 12px; text-align: right; color: var(--muted); font-style: normal; user-select: none }
+.code .gap i { color: transparent } .code .gap { color: var(--muted); height: 0.9em; line-height: 0.6 }
+.code-h { font: 500 0.76rem var(--mono); color: var(--muted); letter-spacing: 0.04em }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem }
+th { text-align: left; font: 500 0.72rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--ink); white-space: nowrap }
+td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top }
+td.v, td.n { font-family: var(--mono); font-size: 0.8rem; font-variant-numeric: tabular-nums }
+td.n { white-space: nowrap; color: var(--muted) } td.v { font-weight: 500; white-space: nowrap }
+td.w { white-space: nowrap; font-family: var(--mono); font-size: 0.78rem; color: var(--muted) }
+.tscroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px }
+.tscroll table { min-width: 640px } .tscroll.slim table { min-width: 460px }
+tr.grp td { font: 600 0.8rem var(--display); letter-spacing: 0.05em; text-transform: uppercase; background: var(--sunk); color: var(--muted); padding: 6px 10px }
+.sim { color: var(--muted); font-style: italic }
+.console { background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font: 400 0.76rem/1.55 var(--mono); max-height: 260px; overflow: auto; overflow-wrap: anywhere }
+.console .in { color: var(--muted) } .console .w { color: var(--warn) } .console .e { color: var(--err) } .console .lg { color: var(--muted); font-style: italic }
+.stat { font-size: 0.88rem; display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline }
+.stat b { font-family: var(--mono); font-variant-numeric: tabular-nums }
+.note { border-left: 3px solid var(--muted); padding: 2px 0 2px 14px; color: var(--muted); font-size: 0.92rem; max-width: 74ch }
+ol.flow { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; max-width: 72ch }
+ul.plain { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; max-width: 76ch }
+.useq { font: 500 0.95rem var(--mono) }
+@media (max-width: 860px) { .two, .bench { grid-template-columns: minmax(0, 1fr) } h2 { font-size: 1.45rem } }
+@media (max-width: 700px) {
+  .tscroll.slim table.vt { min-width: 0 } .vt thead { display: none }
+  .vt tr { display: block; padding: 8px 0; border-bottom: 1px solid var(--line) }
+  .vt td { display: block; border: 0; padding: 1px 12px } .vt td.v { white-space: normal; overflow-wrap: anywhere; font-size: 0.86rem }
+}
+.fig-narrow { max-width: 820px }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">PR #14 · klippy/kinematics/corexy.py · +238 lines · Kalico</div>
+  <h1>CoreXY precise homing</h1>
+  <p class="lede">Sensorless homing finds the axis limit a little earlier or later on every home. This PR adds an optional second step. It measures the corner with one motor, then sets the home position on a whole number of motor electrical cycles, so the same physical spot is called home on every <code>G28</code>.</p>
+  <dl class="facts">
+    <div><dt>Default</dt><dd>Off. Nothing changes until <code>corexy_precise_homing: True</code></dd></div>
+    <div><dt>New config</dt><dd>3 options in <code>[printer]</code></dd></div>
+    <div><dt>New command</dt><dd><code>COREXY_HOMING_CALIBRATE</code></dd></div>
+    <div><dt>Tests</dt><dd>30 unit cases pass, plus one regression script on 2 configs</dd></div>
+  </dl>
+  <nav class="toc" aria-label="Sections">
+    <a href="#idea">The idea</a><a href="#machine">Motors and gantry</a><a href="#walk">One home, step by step</a><a href="#signals">Values read and written</a><a href="#calibrate">Calibration</a><a href="#when">When it runs</a><a href="#guards">Protections</a><a href="#config">Config and commands</a><a href="#map">Code map</a><a href="#review">Reviewer questions</a>
+  </nav>
+</header>
+
+<section id="idea">
+  <h2>The idea</h2>
+  <p>A stepper motor repeats the same pattern of coil currents every four full steps. That repeat is one electrical cycle. With a 1.8° motor and <code>rotation_distance: 40</code> it comes round every 0.8 mm of belt. The points where a cycle starts are fixed to the rotor and the belt, so they work as a ruler built into the machine.</p>
+  <p>StallGuard cannot find the limit to a hundredth of a millimetre. It can easily tell which 0.8 mm tick the limit is next to. So the code measures the distance to the limit in cycles, subtracts a calibrated origin, rounds to a whole number, and builds the home position from that whole number only. The rounding throws the stall noise away.</p>
+  <figure class="fig-narrow">
+    <div class="scroll">
+    <svg viewBox="0 0 720 210" role="img" aria-label="A ruler of electrical cycles. Stall triggers cluster near a calibrated origin and are rounded to the same whole cycle. Triggers more than a quarter cycle from the origin are rejected.">
+      <defs><marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="f-ink"/></marker></defs>
+      <text x="20" y="22" class="t-ink">motor travel from the phase-aligned start to the limit, in electrical cycles</text>
+      <!-- accepted / rejected bands -->
+      <rect x="212.5" y="78" width="75" height="34" class="f-warn" opacity="0.22"/><rect x="227.5" y="78" width="45" height="34" class="f-ok" opacity="0.3"/>
+      <rect x="362.5" y="78" width="75" height="34" class="f-warn" opacity="0.22"/><rect x="377.5" y="78" width="45" height="34" class="f-ok" opacity="0.3"/>
+      <rect x="512.5" y="78" width="75" height="34" class="f-warn" opacity="0.22"/><rect x="527.5" y="78" width="45" height="34" class="f-ok" opacity="0.3"/>
+      <rect x="287.5" y="78" width="75" height="34" class="f-err" opacity="0.13"/><rect x="437.5" y="78" width="75" height="34" class="f-err" opacity="0.13"/>
+      <text x="325" y="99" text-anchor="middle" class="t-err">rejected</text><text x="475" y="99" text-anchor="middle" class="t-err">rejected</text>
+      <!-- ruler -->
+      <line x1="20" y1="130" x2="700" y2="130" class="s-ink" stroke-width="2"/>
+      <g class="s-ink" stroke-width="2"><line x1="60" y1="118" x2="60" y2="142"/><line x1="210" y1="118" x2="210" y2="142"/><line x1="360" y1="112" x2="360" y2="148"/><line x1="510" y1="118" x2="510" y2="142"/><line x1="660" y1="118" x2="660" y2="142"/></g>
+      <g class="s-muted" stroke-width="1"><line x1="97.5" y1="125" x2="97.5" y2="135"/><line x1="135" y1="125" x2="135" y2="135"/><line x1="172.5" y1="125" x2="172.5" y2="135"/><line x1="247.5" y1="125" x2="247.5" y2="135"/><line x1="285" y1="125" x2="285" y2="135"/><line x1="322.5" y1="125" x2="322.5" y2="135"/><line x1="397.5" y1="125" x2="397.5" y2="135"/><line x1="435" y1="125" x2="435" y2="135"/><line x1="472.5" y1="125" x2="472.5" y2="135"/><line x1="547.5" y1="125" x2="547.5" y2="135"/><line x1="585" y1="125" x2="585" y2="135"/><line x1="622.5" y1="125" x2="622.5" y2="135"/></g>
+      <text x="60" y="162" text-anchor="middle">n − 2</text><text x="210" y="162" text-anchor="middle">n − 1</text><text x="360" y="166" text-anchor="middle" class="t-ink" font-weight="600">n</text><text x="510" y="162" text-anchor="middle">n + 1</text><text x="660" y="162" text-anchor="middle">n + 2</text>
+      <path d="M60 186h150M60 181v10M210 181v10" class="f-none s-muted" stroke-width="1"/><text x="135" y="203" text-anchor="middle">one cycle = 0.8 mm of belt</text>
+      <!-- origin + triggers -->
+      <line x1="400" y1="60" x2="400" y2="130" class="s-ok" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="400" y="52" text-anchor="middle" class="t-ok">n + origin (here 0.27)</text>
+      <g class="f-ink"><circle cx="391" cy="95" r="3.5"/><circle cx="397" cy="88" r="3.5"/><circle cx="402" cy="100" r="3.5"/><circle cx="406" cy="92" r="3.5"/><circle cx="411" cy="97" r="3.5"/></g>
+      <path d="M396 108 C 392 150, 372 122, 364 150" class="f-none s-ink" stroke-width="1.5" marker-end="url(#ar1)"/>
+      <text x="700" y="203" text-anchor="end" class="t-ink">five homes, five stall points, all rounded to n</text>
+      <text x="250" y="72" text-anchor="middle">±0.15 fine · ±0.25 warns</text>
+    </svg>
+    </div>
+    <figcaption>One motor, one limit. Each dot is where StallGuard fired on a different home. The origin is where the limit normally lands inside a cycle; calibration measures it so the dots sit in the middle of the accepted band. A reading more than 0.25 cycle from that spot could round either way, so the code refuses it.</figcaption>
+  </figure>
+</section>
+
+<section id="machine">
+  <h2>Motors and gantry</h2>
+  <p>On a CoreXY, neither motor owns an axis. <span class="ma">Motor A</span> is <code>stepper_x</code> and its belt position is X + Y. <span class="mb">Motor B</span> is <code>stepper_y</code> and its belt position is X − Y. Turn one motor alone and the head runs on a 45° diagonal. The whole feature leans on that: one motor, on its own, can reach the X limit by turning one way and the Y limit by turning the other.</p>
+  <div class="two">
+    <figure>
+      <div class="plot">
+      <svg id="g-svg" viewBox="0 0 560 380" role="img" aria-label="CoreXY gantry seen from above. Sliders turn motor A and motor B; the toolhead moves by half the sum in X and half the difference in Y.">
+        <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="f-ink"/></marker></defs>
+        <rect x="40" y="30" width="480" height="320" class="f-none s-muted" stroke-width="2"/>
+        <line x1="280" y1="96" x2="280" y2="344" class="s-line" stroke-width="1"/><line x1="140" y1="220" x2="420" y2="220" class="s-line" stroke-width="1"/>
+        <line id="g-beam" x1="52" y1="220" x2="508" y2="220" class="s-muted" stroke-width="7" stroke-linecap="round"/>
+        <line id="g-trail" x1="280" y1="220" x2="280" y2="220" class="s-ink" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar2)"/>
+        <rect id="g-head" x="267" y="207" width="26" height="26" rx="3" class="f-surface s-ink" stroke-width="2.5"/>
+        <g id="g-ma"><circle cx="78" cy="66" r="24" class="f-surface s-a" stroke-width="3"/><line id="g-sa" x1="78" y1="66" x2="78" y2="44" class="s-a" stroke-width="3" stroke-linecap="round"/></g>
+        <g id="g-mb"><circle cx="482" cy="66" r="24" class="f-surface s-b" stroke-width="3"/><line id="g-sb" x1="482" y1="66" x2="482" y2="44" class="s-b" stroke-width="3" stroke-linecap="round"/></g>
+        <text x="110" y="62" class="t-a" font-weight="600">A · stepper_x</text><text x="110" y="78" class="t-a">X + Y</text>
+        <text x="450" y="62" text-anchor="end" class="t-b" font-weight="600">B · stepper_y</text><text x="450" y="78" text-anchor="end" class="t-b">X − Y</text>
+        <g class="s-ink" stroke-width="1.5"><line x1="58" y1="334" x2="98" y2="334" marker-end="url(#ar2)"/><line x1="58" y1="334" x2="58" y2="294" marker-end="url(#ar2)"/></g>
+        <text x="104" y="338" class="t-ink">X</text><text x="54" y="286" class="t-ink">Y</text>
+      </svg>
+      </div>
+      <figcaption>Schematic top view. Belt routing is left out; the relation between motors and head is what the code uses.</figcaption>
+    </figure>
+    <div class="stack">
+      <div class="panel stack">
+        <div class="ctl"><label for="g-a"><span class="ma">Motor A belt travel</span><output id="g-ao">+40.0 mm</output></label><input type="range" id="g-a" min="-60" max="60" step="1" value="40"></div>
+        <div class="ctl"><label for="g-b"><span class="mb">Motor B belt travel</span><output id="g-bo">0.0 mm</output></label><input type="range" id="g-b" min="-60" max="60" step="1" value="0"></div>
+        <div class="btns">
+          <button class="btn" id="g-p1" type="button">A only</button><button class="btn" id="g-p2" type="button">B only</button><button class="btn" id="g-p3" type="button">Both same way</button><button class="btn" id="g-p4" type="button">Opposite ways</button>
+        </div>
+        <div class="stat"><span>Head moves</span><b id="g-xy">X +20.0, Y +20.0 mm</b></div>
+        <div class="stat"><span id="g-say">One motor alone: a 45° diagonal, half the belt travel on each axis.</span></div>
+      </div>
+      <div><div class="code-h">corexy.py · how positions convert</div>
+      <pre class="code"><div><i>48</i>self.rails[0].setup_itersolve("corexy_stepper_alloc", b"+")</div><div><i>49</i>self.rails[1].setup_itersolve("corexy_stepper_alloc", b"-")</div><div class="gap"><i>.</i></div><div><i>120</i>return [0.5 * (pos[0] + pos[1]), 0.5 * (pos[0] - pos[1]), pos[2]]</div><div class="gap"><i>.</i></div><div><i>167</i>def _move_ab(self, a, b, speed):</div><div><i>168</i>    x, y = self.toolhead.get_position()[:2]</div><div><i>169</i>    self.toolhead.manual_move([x + 0.5 * (a + b), y + 0.5 * (a - b)], speed)</div></pre></div>
+    </div>
+  </div>
+
+  <h3>The electrical cycle and the phase</h3>
+  <p>The TMC driver keeps a microstep counter (<code>MSCNT</code>) that says where the motor is inside its current cycle. Klipper reads it and stores, per motor, an offset called <code>moff</code> so that <code>(mcu_position + moff) % phases</code> is the motor's phase at any step count. Phase 0 is the start of a cycle. The PR uses that value to stand both motors on phase 0 before it measures anything.</p>
+  <figure class="fig-narrow">
+      <div class="scroll"><svg id="cyc-svg" viewBox="0 0 720 236" role="img" aria-label="Two coil currents over two electrical cycles. One cycle is four full steps, 64 microsteps at 16 microstepping, and 0.8 mm of belt."></svg></div>
+      <figcaption>Two cycles of coil current at <code>microsteps: 16</code>. The pattern, and the rotor position that goes with it, repeats every 64 microsteps. That is why a phase-0 point is a physical place and not only a number.</figcaption>
+  </figure>
+  <div class="two">
+      <div class="panel stack">
+        <h3 style="margin:0">Your numbers</h3>
+        <div class="ctl-grid">
+          <div class="ctl"><label for="k-rd">rotation_distance</label><input type="number" id="k-rd" value="40" min="1" max="200" step="1"></div>
+          <div class="ctl"><label for="k-fs">full_steps_per_rotation</label><select id="k-fs"><option value="200" selected>200 (1.8°)</option><option value="400">400 (0.9°)</option></select></div>
+          <div class="ctl"><label for="k-ms">microsteps</label><select id="k-ms"><option>16</option><option>32</option><option>64</option><option>128</option><option>256</option></select></div>
+        </div>
+        <div class="tscroll slim" style="border:0"><table><tbody id="k-out"></tbody></table></div>
+      </div>
+      <div class="stack"><div class="code-h">tmc.py · where the phase comes from</div>
+      <pre class="code"><div><i>559</i>return (256 >> self.fields.get_field("mres")) * 4   # phases</div><div class="gap"><i>.</i></div><div><i>590</i>phase = int(float(driver_phase) / 1024 * phases + 0.5) % phases</div><div><i>591</i>moff = (phase - stepper.get_mcu_position()) % phases</div></pre>
+      <p class="note">The driver reports 1024 positions per cycle; Klipper scales that to <code>phases</code>. <code>moff</code> is refreshed whenever the MCU step position is re-synced, for example after each homing move.</p></div>
+  </div>
+</section>
+
+<section id="walk">
+  <h2>One home, step by step</h2>
+  <p>This is a working model of the new code. The logic is a line-for-line port of <code>_measure_cycles</code>, <code>_snap_home</code> and <code>COREXY_HOMING_CALIBRATE</code>, run against a simulated head, two limits and StallGuard that fires a little early or late. Names in the value table are the variable names in <code>corexy.py</code>. Rows marked <span class="sim">simulated</span> are the truth of the model, which the real firmware cannot see.</p>
+
+  <div class="panel stack">
+    <div class="ctl-grid">
+      <div class="ctl"><label for="s-dx">stepper_x homes toward</label><select id="s-dx"><option value="-1" selected>min (position_endstop: 0)</option><option value="1">max (position_endstop: 200)</option></select></div>
+      <div class="ctl"><label for="s-dy">stepper_y homes toward</label><select id="s-dy"><option value="-1" selected>min (position_endstop: 0)</option><option value="1">max (position_endstop: 200)</option></select></div>
+      <div class="ctl"><label for="s-off">corexy_precise_homing_offset<output id="s-offo">5.0 mm</output></label><input type="range" id="s-off" min="3" max="6" step="0.5" value="5"></div>
+      <div class="ctl"><label for="s-sc">StallGuard scatter<output id="s-sco">±0.05 mm</output></label><input type="range" id="s-sc" min="0" max="0.2" step="0.01" value="0.05"></div>
+      <div class="ctl"><label for="s-sh">X limit moved since calibration<output id="s-sho">0.00 mm</output></label><input type="range" id="s-sh" min="-0.4" max="0.4" step="0.01" value="0"></div>
+      <div class="ctl"><label for="s-ft">Inject a fault</label><select id="s-ft"><option value="none" selected>None</option><option value="early">Early stall on the first X probe</option><option value="disagree">X probes never agree</option><option value="notrig">No stall on the first X probe</option></select></div>
+    </div>
+    <div class="btns">
+      <button class="btn primary cmd" id="s-go" type="button">G28 X Y · play</button>
+      <button class="btn cmd" id="s-20" type="button">G28 × 20</button>
+      <button class="btn cmd" id="s-cal" type="button">COREXY_HOMING_CALIBRATE + SAVE_CONFIG</button>
+      <button class="btn cmd" id="s-rst" type="button">RESTART</button>
+    </div>
+  </div>
+
+  <div class="bench">
+    <div class="stack">
+      <div class="plot">
+        <div class="plot-h"><b>The homing corner</b><span>15 mm square · grid lines are phase 0 of each motor</span></div>
+        <svg id="m-svg" viewBox="0 0 600 600" role="img" aria-label="Top view of the homing corner with the toolhead, both limits, and the grid of phase-zero lines for motor A and motor B."></svg>
+        <div class="legend"><span><i style="background:var(--a)"></i>motor A phase-0 lines</span><span><i style="background:var(--b)"></i>motor B phase-0 lines</span><span><i style="background:var(--ink)"></i>toolhead</span><span><i style="background:transparent;border:2px solid var(--err)"></i>where Klipper puts the corner</span></div>
+      </div>
+      <div class="stat" id="s-stat"></div>
+    </div>
+    <div class="stack">
+      <div class="dials">
+        <div class="panel dial"><span class="nm ma">Motor A · stepper_x</span><svg id="d-a" viewBox="0 0 100 100" role="img" aria-label="Phase dial of motor A"></svg><span class="st" id="d-as">phase 0 / 64</span><span class="st" id="d-ar">idle</span></div>
+        <div class="panel dial"><span class="nm mb">Motor B · stepper_y</span><svg id="d-b" viewBox="0 0 100 100" role="img" aria-label="Phase dial of motor B"></svg><span class="st" id="d-bs">phase 0 / 64</span><span class="st" id="d-br">idle</span></div>
+      </div>
+      <div class="plot">
+        <div class="plot-h"><b>Corner, magnified</b><span>2.4 mm square · <span id="z-n">0</span> homes</span></div>
+        <svg id="z-svg" viewBox="0 0 360 360" role="img" aria-label="Magnified view of the corner. Regular homes scatter; precise homes all land on one grid point."></svg>
+        <div class="legend"><span><i style="background:transparent;border:2px solid var(--muted)"></i>corner after the regular home</span><span><i style="background:var(--ink)"></i>corner as measured by the probes</span><span><i style="background:var(--err)"></i>corner after the snap</span><span><i style="background:var(--ok);border-radius:0;opacity:.5"></i>drift ≤ 0.15</span><span><i style="background:var(--warn);border-radius:0;opacity:.5"></i>≤ 0.25</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="steprow">
+    <div class="chips" id="s-chips" role="tablist" aria-label="Steps of one home"></div>
+    <div class="btns"><button class="btn" id="s-prev" type="button">Back</button><button class="btn" id="s-next" type="button">Next step</button><span id="s-pill" class="pill ok">SNAPPED</span></div>
+  </div>
+  <p id="s-text"></p>
+  <div class="tscroll slim"><table class="vt"><thead><tr><th>Name in code</th><th>Value</th><th>Meaning</th></tr></thead><tbody id="s-vals"></tbody></table></div>
+  <div class="two">
+    <div class="stack"><div class="code-h" id="s-codeh">corexy.py</div><pre class="code" id="s-code"></pre></div>
+    <div class="stack"><div class="code-h">console and klippy.log</div><div class="console" id="s-con" aria-live="polite"></div></div>
+  </div>
+  <p class="note">Try this: press <b>G28 × 20</b> and compare the two spreads under the corner view. Then drag “X limit moved since calibration”: the warning starts near ±0.12 mm and the rejection near ±0.20 mm, give or take the StallGuard scatter of that home. Changing the offset does not need a new calibration, because the head is always moved onto the phase grid before it measures.</p>
+</section>
+
+<section id="signals">
+  <h2>Values read and written</h2>
+  <p>Everything the feature watches comes from two places: the step counter in the MCU and the TMC driver. Everything it changes goes through the toolhead.</p>
+  <div class="tscroll"><table>
+    <thead><tr><th>Value</th><th>Where it comes from</th><th>Used for</th><th>Line</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="4">Read</td></tr>
+      <tr><td class="v">StallGuard trigger</td><td>The driver's DIAG pin, through the <code>virtual_endstop</code> of the probing motor's rail only</td><td>Ends each diagonal probe move</td><td class="w">222</td></tr>
+      <tr><td class="v">get_trigger_position()</td><td>MCU step count of the probing motor at the instant of the trigger</td><td><code>samples</code>: motor travel from the start to the stall</td><td class="w">223, 228</td></tr>
+      <tr><td class="v">s.get_mcu_position()</td><td>MCU step counter</td><td>Phase alignment, <code>start_mcu</code>, and stepping back to the exact start</td><td class="w">201, 208, 226</td></tr>
+      <tr><td class="v">tmc.get_phase_offset()</td><td><code>moff</code> and <code>phases</code>, from the driver's microstep counter (tmc.py 564, 590–591)</td><td>Which step count is phase 0</td><td class="w">194</td></tr>
+      <tr><td class="v">s.get_step_dist()</td><td><code>rotation_distance</code>, <code>microsteps</code>, <code>full_steps_per_rotation</code></td><td>Steps to mm, and <code>cycle_mm</code></td><td class="w">202–203</td></tr>
+      <tr><td class="v">rail.get_homing_info()</td><td><code>[stepper_x]</code> and <code>[stepper_y]</code>: <code>position_endstop</code>, homing direction, <code>homing_speed</code>, <code>homing_retract_speed</code></td><td><code>dirs</code>, <code>park</code>, the probe frame and the speeds</td><td class="w">185–187</td></tr>
+      <tr><td class="v">toolhead.get_position()</td><td>Klipper's current coordinates</td><td><code>start</code>, and the Z and E values kept across the snap</td><td class="w">205, 269</td></tr>
+      <tr class="grp"><td colspan="4">Written</td></tr>
+      <tr><td class="v">toolhead.manual_move()</td><td colspan="2">Park, phase nudge, and the return after every probe</td><td class="w">169, 189</td></tr>
+      <tr><td class="v">homing_state.home_rails()</td><td colspan="2">The probe moves. They run through the normal homing path, so homing current, homing accel and the endstop reset apply as on a regular home</td><td class="w">222</td></tr>
+      <tr><td class="v">toolhead.set_position(start)</td><td colspan="2">Puts the coordinates back after the temporary probe frames</td><td class="w">242</td></tr>
+      <tr><td class="v">toolhead.set_position(pos)</td><td colspan="2">The snap itself: X and Y are redefined, the head does not move</td><td class="w">271</td></tr>
+      <tr><td class="v">self.precise_origin</td><td colspan="2">Set by calibration; cleared in memory when a home does not match it</td><td class="w">253, 304</td></tr>
+      <tr><td class="v">self.unsnapped_axes</td><td colspan="2">Which axes hold a position found by a real home and not yet snapped</td><td class="w">127, 136, 140, 156–158</td></tr>
+      <tr><td class="v">configfile.set()</td><td colspan="2">Stages <code>corexy_precise_homing_origin</code> for <code>SAVE_CONFIG</code></td><td class="w">313</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="calibrate">
+  <h2>Calibration</h2>
+  <p><code>COREXY_HOMING_CALIBRATE</code> runs the same measurement several times (5 by default) and stores where the corner falls inside a cycle. Each sample starts from a different grid point, set by <code>CAL_GRID</code>: whole cycles of A and B away from the first. If the machine is consistent, the whole-number part of each result changes and the fraction stays put.</p>
+  <p>The fractions are averaged on a circle, because 0.49 and −0.49 are neighbours, not opposites. If any sample is more than 0.15 cycle from the mean the command fails with “not repeatable” and the old origin is kept. On success the origin is used at once and is written to the config file by <code>SAVE_CONFIG</code>.</p>
+  <div class="two">
+    <div class="stack">
+      <div class="dials">
+        <div class="panel dial"><span class="nm ma">Motor A fraction</span><svg id="c-a" viewBox="0 0 140 140" style="width:150px;height:150px" role="img" aria-label="Fractional cycles of motor A across calibration samples"></svg><span class="st" id="c-as"></span></div>
+        <div class="panel dial"><span class="nm mb">Motor B fraction</span><svg id="c-b" viewBox="0 0 140 140" style="width:150px;height:150px" role="img" aria-label="Fractional cycles of motor B across calibration samples"></svg><span class="st" id="c-bs"></span></div>
+      </div>
+      <p class="note">Live from the simulator's last calibration. One turn of the dial is one cycle. Dots are samples, the pointer is the stored origin, the shaded arc is the ±0.15 spread that is allowed.</p>
+    </div>
+    <div class="stack">
+      <div class="tscroll slim"><table><thead><tr><th>Sample</th><th>CAL_GRID</th><th>cycles A</th><th>cycles B</th></tr></thead><tbody id="c-rows"></tbody></table></div>
+      <pre class="code"><div><i>293</i>for vals in zip(*results):</div><div><i>294</i>    angles = [2.0 * math.pi * v for v in vals]</div><div><i>295</i>    sin, cos = sum(map(math.sin, angles)), sum(map(math.cos, angles))</div><div><i>296</i>    o = round(math.atan2(sin, cos) / (2.0 * math.pi), 3) + 0.0</div><div><i>297</i>    spread = max(abs((v - o + 0.5) % 1.0 - 0.5) for v in vals)</div><div><i>298</i>    if spread > WARN_PHASE_ERROR:</div><div><i>299</i>        raise gcmd.error("... not repeatable; check sensorless homing tuning")</div></pre>
+    </div>
+  </div>
+  <p>The corner Klipper reports after a snap is the grid point, not the wall. The wall sits <code>origin</code> cycles away from it. That is why the docs warn that the home position can move by up to about half a cycle per motor after a new calibration.</p>
+</section>
+
+<section id="when">
+  <h2>When the snap runs</h2>
+  <p>The precise step needs X and Y to both hold a position that came from a real home. <code>unsnapped_axes</code> tracks that. An axis is added when its home finishes, and removed when it is about to be homed again, when <code>SET_KINEMATIC_POSITION</code> forces its position, or when its homed state is cleared. When the set holds both 0 and 1, it is emptied and the snap runs once.</p>
+  <div class="two">
+    <div class="panel stack">
+      <div class="btns">
+        <button class="btn cmd" type="button" data-u="g28">G28</button><button class="btn cmd" type="button" data-u="x">G28 X</button><button class="btn cmd" type="button" data-u="y">G28 Y</button><button class="btn cmd" type="button" data-u="skp">SET_KINEMATIC_POSITION</button><button class="btn cmd" type="button" data-u="m18">M18</button>
+      </div>
+      <div class="stat"><span>unsnapped_axes</span><b class="useq" id="u-set">set()</b><span>homed</span><b class="useq" id="u-homed">none</b></div>
+      <div class="console" id="u-log" aria-live="polite" style="max-height:170px"></div>
+    </div>
+    <div class="stack">
+      <pre class="code"><div><i>127</i>self.unsnapped_axes.discard(i)        # set_position(homing_axes=...)</div><div><i>136</i>self.unsnapped_axes.discard(axis)     # clear_homing_state()</div><div><i>140</i>self.unsnapped_axes.difference_update(homing_state.get_axes())</div><div class="gap"><i>.</i></div><div><i>156</i>self.unsnapped_axes.add(axis)</div><div><i>157</i>if self.precise_homing and {0, 1} <= self.unsnapped_axes:</div><div><i>158</i>    self.unsnapped_axes.clear()</div></pre>
+      <p class="note">A full <code>G28</code> snaps after Y and before Z is homed. Z is added to the set too, but only 0 and 1 are ever tested. A lone <code>G28 X</code> after a snap leaves X on its regular, unsnapped home until Y is homed again.</p>
+    </div>
+  </div>
+</section>
+
+<section id="guards">
+  <h2>Protections</h2>
+  <p>Every way the feature can refuse to act, in the order the code meets them. Thresholds are the constants at the top of <code>corexy.py</code> (lines 12–17).</p>
+  <div class="tscroll"><table>
+    <thead><tr><th>Guard</th><th>Condition</th><th>Result</th><th>Line</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="4">When the config is loaded</td></tr>
+      <tr><td>Off by default</td><td><code>corexy_precise_homing</code> defaults to False</td><td>No command registered, no probing. Only the <code>unsnapped_axes</code> bookkeeping runs</td><td class="w">69, 157</td></tr>
+      <tr><td>Sensorless only</td><td><code>use_sensorless_homing</code> is false on <code>stepper_x</code> or <code>stepper_y</code></td><td>Config error: “requires sensorless homing on …”</td><td class="w">79–83</td></tr>
+      <tr><td>No endstop_phase</td><td>An <code>[endstop_phase stepper_x]</code> or <code>stepper_y</code> section exists</td><td>Config error: “is incompatible with …”</td><td class="w">84–88</td></tr>
+      <tr><td>Room to work</td><td><code>corexy_precise_homing_offset</code> below 3.0</td><td>Config error from <code>minval</code></td><td class="w">70–72</td></tr>
+      <tr><td>Origin shape</td><td><code>corexy_precise_homing_origin</code> is not exactly two numbers</td><td>Config error from <code>count=2</code></td><td class="w">73–75</td></tr>
+      <tr class="grp"><td colspan="4">When Klipper connects</td></tr>
+      <tr><td>TMC driver present</td><td>No <code>[tmcXXXX stepper_x]</code> or <code>stepper_y</code> section</td><td>Config error: “requires a TMC driver on …”</td><td class="w">98–113</td></tr>
+      <tr class="grp"><td colspan="4">On every home</td></tr>
+      <tr><td>Real homes only</td><td>X and Y are not both in <code>unsnapped_axes</code></td><td>Regular home only, no probing</td><td class="w">140, 156–157</td></tr>
+      <tr><td>Calibrated</td><td><code>precise_origin</code> is None</td><td>Regular home, plus the notice “not calibrated; run COREXY_HOMING_CALIBRATE”</td><td class="w">159–163</td></tr>
+      <tr><td>Phase known</td><td><code>moff</code> is None (driver could not be read)</td><td>Error: “Stepper … phase unknown”. Skipped only in the file-output mode used by regression tests</td><td class="w">195–200</td></tr>
+      <tr><td>Travel limit</td><td>No stall within 2 × offset of head travel per axis</td><td>The existing homing error “No trigger on … after full movement”</td><td class="w">214–218</td></tr>
+      <tr><td>Early stall</td><td>A sample is not greater than <code>min_dist</code>, half the expected motor travel</td><td>Sample cannot be accepted; probe again</td><td class="w">219, 232</td></tr>
+      <tr><td>Probes agree</td><td>The last 2 samples differ by more than 0.25 × <code>cycle_mm</code> (0.2 mm of belt)</td><td>Probe again, up to 5 probes per limit</td><td class="w">233</td></tr>
+      <tr><td>Retry limit</td><td>5 probes on one limit without an accepted pair</td><td>Error: “inconsistent X wall probes (…)” with every sample listed</td><td class="w">237–241</td></tr>
+      <tr><td>Drift warning</td><td>Result is more than 0.15 cycle from a whole number</td><td>Home succeeds; message “phase origin has drifted … consider running COREXY_HOMING_CALIBRATE”</td><td class="w">259–263</td></tr>
+      <tr><td>Drift rejection</td><td>Result is more than 0.25 cycle from a whole number</td><td>Error: “do not match origin …”. The origin is forgotten in memory so the next home runs as a regular home and can be calibrated from</td><td class="w">251–258</td></tr>
+      <tr><td>Any error in G28</td><td>A command error anywhere above</td><td>The existing handler turns the motors off, so X and Y are no longer homed (homing.py 500–506)</td><td class="w">n/a</td></tr>
+      <tr class="grp"><td colspan="4">During COREXY_HOMING_CALIBRATE</td></tr>
+      <tr><td>Homed first</td><td>X or Y has no limits set</td><td>Error: “Must home X and Y first”</td><td class="w">276–277</td></tr>
+      <tr><td>Enough samples</td><td><code>SAMPLES</code> below 2</td><td>Parameter error from <code>minval</code></td><td class="w">278</td></tr>
+      <tr><td>Failed measurement</td><td>Any probe error while sampling</td><td>X and Y are marked unhomed, because the coordinates may still be a temporary probe frame</td><td class="w">288–290</td></tr>
+      <tr><td>Repeatable</td><td>A sample's fraction is more than 0.15 cycle from the circular mean</td><td>Error: “not repeatable; check sensorless homing tuning”. Origin unchanged</td><td class="w">297–302</td></tr>
+      <tr><td>Explicit save</td><td>Always</td><td>The new origin is live at once but reaches the file only on <code>SAVE_CONFIG</code></td><td class="w">304, 312–313</td></tr>
+    </tbody>
+  </table></div>
+  <p>In head terms, the drift test is <b>|Δx| + |Δy|</b> between the measured corner and where calibration says it should be. With a 0.8 mm cycle the warning starts at 0.12 mm and the rejection at 0.20 mm. Those are the green and amber diamonds in the magnified view.</p>
+</section>
+
+<section id="config">
+  <h2>Config and commands</h2>
+  <div class="two">
+    <div class="stack">
+      <pre class="code"><div><i> </i>[printer]</div><div><i> </i>kinematics: corexy            # or limited_corexy</div><div><i> </i>corexy_precise_homing: True</div><div><i> </i>#corexy_precise_homing_offset: 5.0</div><div><i> </i>#   mm from both endstops where the measurement starts.</div><div><i> </i>#   Minimum 3. The head is left about here after homing.</div><div><i> </i>#corexy_precise_homing_origin: 0.266, -0.359</div><div><i> </i>#   Written by SAVE_CONFIG after calibration. Fraction of a</div><div><i> </i>#   cycle for motor A, then motor B. Not set by hand.</div></pre>
+      <p>Required around it: a TMC driver and sensorless homing on both <code>stepper_x</code> and <code>stepper_y</code>, no <code>[endstop_phase]</code> section for either. The docs also ask for no <code>hold_current</code> on either driver.</p>
+    </div>
+    <div class="stack">
+      <h3 style="margin:0">First use</h3>
+      <ol class="flow">
+        <li>Add <code>corexy_precise_homing: True</code> and <code>RESTART</code>.</li>
+        <li><code>G28</code>. It homes as before and prints the “not calibrated” notice.</li>
+        <li><code>COREXY_HOMING_CALIBRATE</code>, optionally with <code>SAMPLES=&lt;count&gt;</code>. Five measurements, then the origin is printed.</li>
+        <li><code>SAVE_CONFIG</code>. From now on every home of both X and Y is snapped.</li>
+        <li>Check positions that must be exact, such as a probe dock. The home position can have moved by up to about half a cycle per motor.</li>
+      </ol>
+      <p class="note">Recalibrate after a change to belts or their tension, pulleys, motors, the frame, or the homing direction of X or Y. If a home fails with “do not match origin”, run <code>G28</code> again and then recalibrate.</p>
+    </div>
+  </div>
+</section>
+
+<section id="map">
+  <h2>Code map</h2>
+  <div class="tscroll"><table>
+    <thead><tr><th>Lines</th><th>Name</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3">klippy/kinematics/corexy.py</td></tr>
+      <tr><td class="w">12–17</td><td class="v">constants</td><td>2 agreeing probes per limit, 3 retries, 0.25 reject, 0.15 warn, and the calibration grid</td></tr>
+      <tr><td class="w">23–34</td><td class="v">DiagonalProbeRail</td><td>Wraps a rail for the probes: speed × √0.5 so the motor turns at the tuned homing speed, no retract, no minimum-distance rehome</td></tr>
+      <tr><td class="w">66–96</td><td class="v">__init__</td><td>Reads the three options, checks sensorless and endstop_phase, registers the command</td></tr>
+      <tr><td class="w">98–113</td><td class="v">_handle_connect</td><td>Finds the TMC driver object for each of <code>stepper_x</code> and <code>stepper_y</code></td></tr>
+      <tr><td class="w">127, 136</td><td class="v">set_position, clear_homing_state</td><td>Drop an axis from <code>unsnapped_axes</code></td></tr>
+      <tr><td class="w">138–165</td><td class="v">home</td><td>The regular home, then the snap once both X and Y are real homes</td></tr>
+      <tr><td class="w">167–170</td><td class="v">_move_ab</td><td>Moves the head by a given belt travel of motor A and motor B</td></tr>
+      <tr><td class="w">181–245</td><td class="v">_measure_cycles</td><td>Park, phase align, probe both limits with one motor, return the corner in cycles of A and B</td></tr>
+      <tr><td class="w">247–271</td><td class="v">_snap_home</td><td>Round against the origin, check drift, rewrite the toolhead position</td></tr>
+      <tr><td class="w">275–313</td><td class="v">cmd_COREXY_HOMING_CALIBRATE</td><td>Sample on the grid, circular mean, spread check, snap, stage the config value</td></tr>
+      <tr class="grp"><td colspan="3">test/test_corexy_precise_homing.py · a simulated head with real limit stalls</td></tr>
+      <tr><td class="w">166</td><td class="v">test_measure_cycles_geometry</td><td>All four homing directions: one motor drives, the other holds, the result equals the true corner offset</td></tr>
+      <tr><td class="w">195</td><td class="v">test_home_snaps_corner_to_same_phase</td><td>Two homes from different places with different stall errors end with the same coordinates</td></tr>
+      <tr><td class="w">223</td><td class="v">test_snap_home_rounding</td><td>The 0.15 and 0.25 thresholds, and that a mismatch forgets the origin</td></tr>
+      <tr><td class="w">245</td><td class="v">test_probe_acceptance</td><td>Early stalls and disagreeing probes are retried; five failures raise the error</td></tr>
+      <tr><td class="w">261</td><td class="v">test_home_snaps_only_after_x_and_y</td><td>The <code>unsnapped_axes</code> rules, including a forced position and a cleared axis</td></tr>
+      <tr><td class="w">300</td><td class="v">test_calibrate</td><td>Grid sampling, circular mean, “not repeatable”, and the staged config value</td></tr>
+      <tr class="grp"><td colspan="3">test/klippy/corexy_precise_homing.test · full Klipper in file-output mode</td></tr>
+      <tr><td class="w">n/a</td><td class="v">two configs</td><td>Both to min and calibrated; X to max on <code>limited_corexy</code>, no retract, uncalibrated. Runs G28, split homes, both calibrate forms, M18 and a re-home</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="review">
+  <h2>Questions a reviewer may ask</h2>
+  <p>These follow from reading the code. None is a bug report; they are the points to have an answer for.</p>
+  <ul class="plain">
+    <li><b>Is <code>hold_current</code> checked?</b> No. The docs require that neither driver sets it, but nothing in <code>corexy.py</code> enforces it.</li>
+    <li><b>What about rails with more than one motor?</b> Only the first stepper of each rail is phase aligned and counted (<code>rail.get_steppers()[0]</code>, line 191), and the driver is looked up by the rail name. A second motor such as <code>stepper_x1</code> is not checked.</li>
+    <li><b>Which speed do the non-probing moves use?</b> <code>his[0].retract_speed</code>, the <code>homing_retract_speed</code> of <code>stepper_x</code>, for the park, the nudge and every return (line 187).</li>
+    <li><b>What survives a restart after a rejected home?</b> Only the in-memory origin is cleared (line 253). After <code>RESTART</code> the saved value is loaded again, so the next home is checked against it once more until a new calibration is saved.</li>
+    <li><b>How much longer is a home?</b> At least four extra probe moves (two per limit), at most ten, each about <code>offset</code> mm of head travel on each axis and back.</li>
+    <li><b>What does a slipped belt do?</b> By the arithmetic, not a test: one 2 mm belt tooth is 2.5 cycles of 0.8 mm, so a one-tooth slip moves that motor's fraction by half a cycle and the home is rejected until recalibrated. Lost motor steps come in whole cycles and leave the fraction unchanged.</li>
+    <li><b>Where does the head end up?</b> About <code>corexy_precise_homing_offset</code> mm from both endstops, not at the regular retract distance.</li>
+  </ul>
+</section>
+</div>
+
+<script id="ph-core">
+/* Port of klippy/kinematics/corexy.py (precise homing) and of the Machine in test/test_corexy_precise_homing.py */
+(function (root) {
+  'use strict';
+  var SD = 40 / (200 * 16), PHASES = 64, CYCLE = SD * PHASES;
+  var PROBES_PER_WALL = 2, PROBE_RETRIES = 3, MAX_PHASE_ERROR = 0.25, WARN_PHASE_ERROR = 0.15;
+  var CAL_GRID = [[0, 0], [1, 0], [0, 1], [1, 1], [2, 1], [1, 2]];
+  var NAMES = ['stepper_x', 'stepper_y'];
+  function mod(a, n) { return ((a % n) + n) % n; }
+  function f3(v) { return v.toFixed(3); }
+  function CmdError(msg, stage) { this.message = msg; this.stage = stage; }
+
+  function Machine(dirs, walls, moff) {
+    this.dirs = dirs; this.walls = walls; this.moff = moff;
+    this.phys = [0, 0]; this.pos = [0, 0]; this.trig = [0, 0];
+  }
+  Machine.prototype.mcu = function (i) {
+    return Math.round((i === 0 ? this.phys[0] + this.phys[1] : this.phys[0] - this.phys[1]) / SD);
+  };
+  Machine.prototype.manualMove = function (c) {
+    for (var i = 0; i < 2; i++) { this.phys[i] += c[i] - this.pos[i]; this.pos[i] = c[i]; }
+    this.settle();
+  };
+  Machine.prototype.setPosition = function (p) { this.pos = [p[0], p[1]]; };
+  // Optional: a real head can only rest on whole microsteps of both motors
+  Machine.prototype.settle = function () {
+    if (!this.quant) return;
+    var a = this.mcu(0) * SD, b = this.mcu(1) * SD;
+    this.phys = [0.5 * (a + b), 0.5 * (a - b)];
+  };
+  // A homing move: the frame is forced to forcepos, the head runs toward movepos until a limit stalls it
+  Machine.prototype.homeRails = function (forcepos, movepos, err, name) {
+    var i, start = [], end = [], v = [], tmin = Infinity;
+    for (i = 0; i < 2; i++) {
+      start[i] = forcepos[i] == null ? this.pos[i] : forcepos[i];
+      end[i] = movepos[i] == null ? this.pos[i] : movepos[i];
+      v[i] = end[i] - start[i];
+      if (v[i] * this.dirs[i] > 0) tmin = Math.min(tmin, (this.walls[i] - this.phys[i]) / v[i]);
+    }
+    var speed = Math.max(Math.abs(v[0] + v[1]), Math.abs(v[0] - v[1]));
+    var t = tmin + err / speed;
+    if (!(t <= 1.0)) throw new CmdError('No trigger on ' + name + ' after full movement');
+    this.phys = [this.phys[0] + t * v[0], this.phys[1] + t * v[1]]; this.settle();
+    this.pos = end; this.trig = [this.mcu(0), this.mcu(1)];
+  };
+  function moveAB(m, a, b) { m.manualMove([m.pos[0] + 0.5 * (a + b), m.pos[1] + 0.5 * (a - b)]); }
+
+  // corexy.py:181 _measure_cycles
+  function measureCycles(m, cfg, grid, nextErr, log) {
+    var ends = cfg.ends, dirs = m.dirs, offset = cfg.offset, i;
+    log.parkFrom = m.phys.slice();
+    var park = [ends[0] - dirs[0] * offset, ends[1] - dirs[1] * offset];
+    m.manualMove(park);
+    log.park = park; log.parkPhys = m.phys.slice();
+    var cycle_mm = [], nudge = []; log.nudge = [];
+    for (i = 0; i < 2; i++) {
+      var mcu = m.mcu(i), moff = m.moff[i];
+      var steps = mod(-(mcu + moff), PHASES) - grid[i] * PHASES;
+      cycle_mm.push(PHASES * SD); nudge.push(steps * SD);
+      log.nudge.push({ mcu: mcu, moff: moff, phase: mod(mcu + moff, PHASES), steps: steps, mm: steps * SD });
+    }
+    moveAB(m, nudge[0], nudge[1]);
+    var start = m.pos.slice();
+    var mi = dirs[0] === dirs[1] ? 1 : 0;
+    var start_mcu = m.mcu(mi), dists = [];
+    log.cycle_mm = cycle_mm; log.start = start; log.startPhys = m.phys.slice(); log.m = mi; log.start_mcu = start_mcu; log.walls = [];
+    for (var wall = 0; wall < 2; wall++) {
+      var vec = [-dirs[0] * 2.0 * offset, -dirs[1] * 2.0 * offset];
+      vec[wall] = -vec[wall];
+      var forcepos = [start[0], start[1]];
+      forcepos[wall] = ends[wall] - vec[wall];
+      var movepos = [forcepos[0] + vec[0], forcepos[1] + vec[1]];
+      var min_dist = Math.abs(ends[wall] - start[wall]);
+      var samples = [], ok = false;
+      var wl = { vec: vec, forcepos: forcepos, movepos: movepos, min_dist: min_dist, probes: [], dist: null };
+      log.walls.push(wl); log.cur = 3 + wall;
+      for (var k = 0; k < PROBES_PER_WALL + PROBE_RETRIES; k++) {
+        m.homeRails(forcepos, movepos, nextErr(wall), NAMES[mi]);
+        var trig = m.trig[mi], trigPhys = m.phys.slice();
+        var back = [0.0, 0.0];
+        back[mi] = (start_mcu - m.mcu(mi)) * SD;
+        moveAB(m, back[0], back[1]);
+        samples.push(Math.abs(trig - start_mcu) * SD);
+        wl.probes.push({ trig: trigPhys, sample: samples[samples.length - 1] });
+        var last = samples.slice(-PROBES_PER_WALL);
+        if (last.length === PROBES_PER_WALL && Math.min.apply(null, last) > min_dist &&
+            Math.max.apply(null, last) - Math.min.apply(null, last) <= MAX_PHASE_ERROR * cycle_mm[mi]) {
+          dists.push((last[0] + last[1]) / PROBES_PER_WALL); wl.dist = dists[wall]; ok = true;
+          break;
+        }
+      }
+      if (!ok) throw new CmdError('corexy precise homing: inconsistent ' + 'XY'[wall] + ' wall probes (' + samples.map(f3).join(', ') + ')', 3 + wall);
+    }
+    m.setPosition(start);
+    var dx = dirs[0] * dists[0], dy = dirs[1] * dists[1];
+    var c = [0.5 * (dx + dy) / cycle_mm[0], 0.5 * (dx - dy) / cycle_mm[1]];
+    log.dx = dx; log.dy = dy; log.c = c;
+    return { c: c, cycle_mm: cycle_mm };
+  }
+
+  // corexy.py:247 _snap_home. st.origin is self.precise_origin
+  function snapHome(m, cfg, st, c, cycle_mm) {
+    var o = st.origin, rel = [c[0] - o[0], c[1] - o[1]];
+    var n = [Math.round(rel[0]), Math.round(rel[1])];
+    var drift = Math.max(Math.abs(rel[0] - n[0]), Math.abs(rel[1] - n[1]));
+    var out = { rel: rel, n: n, drift: drift, warn: null, origin: o.slice() };
+    if (drift > MAX_PHASE_ERROR) {
+      st.origin = null;
+      var e = new CmdError('corexy precise homing: cycles A ' + f3(c[0]) + ' B ' + f3(c[1]) + ' do not match origin ' +
+        f3(o[0]) + ', ' + f3(o[1]) + '; home again and run COREXY_HOMING_CALIBRATE', 6);
+      e.detail = out; throw e;
+    }
+    if (drift > WARN_PHASE_ERROR)
+      out.warn = 'corexy precise homing: phase origin has drifted ' + drift.toFixed(2) + ' cycles; consider running COREXY_HOMING_CALIBRATE';
+    out.log = 'corexy precise homing: cycles A ' + f3(c[0]) + ' B ' + f3(c[1]) + ' -> ' + n[0] + ' ' + n[1];
+    var a = n[0] * cycle_mm[0], b = n[1] * cycle_mm[1];
+    out.a = a; out.b = b;
+    out.pos = [cfg.ends[0] - 0.5 * (a + b), cfg.ends[1] - 0.5 * (a - b)];
+    m.setPosition(out.pos);
+    return out;
+  }
+
+  // corexy.py:275 cmd_COREXY_HOMING_CALIBRATE (after the "Must home X and Y first" check)
+  function calibrate(m, cfg, st, count, nextErr, say) {
+    var results = [], grids = [], r, i, j;
+    for (i = 0; i < count; i++) {
+      var grid = CAL_GRID[i % CAL_GRID.length];
+      r = measureCycles(m, cfg, grid, nextErr, {});
+      results.push(r.c); grids.push(grid);
+      say('cycles A ' + f3(r.c[0]) + ' B ' + f3(r.c[1]));
+    }
+    var origin = [], spreads = [];
+    for (j = 0; j < 2; j++) {
+      var sin = 0, cos = 0;
+      for (i = 0; i < count; i++) { sin += Math.sin(2 * Math.PI * results[i][j]); cos += Math.cos(2 * Math.PI * results[i][j]); }
+      var o = Math.round(Math.atan2(sin, cos) / (2 * Math.PI) * 1000) / 1000 + 0.0, spread = 0;
+      for (i = 0; i < count; i++) spread = Math.max(spread, Math.abs(mod(results[i][j] - o + 0.5, 1.0) - 0.5));
+      if (spread > WARN_PHASE_ERROR) throw new CmdError('corexy precise homing: not repeatable; check sensorless homing tuning');
+      origin.push(o); spreads.push(spread);
+    }
+    st.origin = origin;
+    var snap = snapHome(m, cfg, st, r.c, r.cycle_mm);
+    return { results: results, grids: grids, origin: origin, spreads: spreads, snap: snap };
+  }
+
+  root.PH = { SD: SD, PHASES: PHASES, CYCLE: CYCLE, MAX: MAX_PHASE_ERROR, WARN: WARN_PHASE_ERROR, CAL_GRID: CAL_GRID, NAMES: NAMES,
+    mod: mod, Machine: Machine, CmdError: CmdError, moveAB: moveAB, measureCycles: measureCycles, snapHome: snapHome, calibrate: calibrate };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+(function () {
+'use strict';
+const PH = window.PH, SD = PH.SD, PHASES = PH.PHASES, CYC = PH.CYCLE;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const f = (v, d) => v.toFixed(d == null ? 3 : d);
+const sg = (v, d) => (v >= 0 ? '+' : '') + v.toFixed(d == null ? 3 : d);
+const A = (a, d) => '[' + a.map(v => f(v, d)).join(', ') + ']';
+const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- gantry figure ---------- */
+function gantry() {
+  const a = +$('g-a').value, b = +$('g-b').value, x = (a + b) / 2, y = (a - b) / 2;
+  const hx = 280 + x * 2.2, hy = 220 - y * 2.2;
+  $('g-head').setAttribute('x', hx - 13); $('g-head').setAttribute('y', hy - 13);
+  $('g-beam').setAttribute('y1', hy); $('g-beam').setAttribute('y2', hy);
+  const tr = $('g-trail'); tr.setAttribute('x2', hx); tr.setAttribute('y2', hy);
+  tr.style.visibility = (a || b) ? 'visible' : 'hidden';
+  $('g-sa').setAttribute('transform', 'rotate(' + (a / 40 * 360) + ' 78 66)');
+  $('g-sb').setAttribute('transform', 'rotate(' + (b / 40 * 360) + ' 482 66)');
+  $('g-ao').textContent = sg(a, 1) + ' mm'; $('g-bo').textContent = sg(b, 1) + ' mm';
+  $('g-xy').textContent = 'X ' + sg(x, 1) + ', Y ' + sg(y, 1) + ' mm';
+  $('g-say').textContent = (!a && !b) ? 'Both motors still.' :
+    (!a || !b) ? 'One motor alone: a 45° diagonal, half the belt travel on each axis.' :
+    (a === b) ? 'Both motors the same way: pure X.' : (a === -b) ? 'Motors in opposite directions: pure Y.' :
+    'A mix of both: x = (A + B) / 2, y = (A − B) / 2.';
+}
+[['g-p1', 40, 0], ['g-p2', 0, 40], ['g-p3', 40, 40], ['g-p4', 40, -40]].forEach(p =>
+  $(p[0]).addEventListener('click', () => { $('g-a').value = p[1]; $('g-b').value = p[2]; gantry(); }));
+$('g-a').addEventListener('input', gantry); $('g-b').addEventListener('input', gantry);
+
+/* ---------- electrical cycle figure ---------- */
+(function () {
+  const X = u => 64 + u * 4.9, mid = 96, amp = 50;
+  let p1 = '', p2 = '', s = '';
+  for (let u = 0; u <= 128; u++) {
+    p1 += (u ? 'L' : 'M') + X(u) + ' ' + (mid - amp * Math.sin(2 * Math.PI * u / 64)).toFixed(1);
+    p2 += (u ? 'L' : 'M') + X(u) + ' ' + (mid - amp * Math.cos(2 * Math.PI * u / 64)).toFixed(1);
+  }
+  s += '<rect x="' + X(0) + '" y="34" width="' + (X(64) - X(0)) + '" height="124" class="f-sunk"/>';
+  for (let u = 0; u <= 128; u += 16) {
+    const ph0 = u % 64 === 0;
+    s += '<line x1="' + X(u) + '" y1="34" x2="' + X(u) + '" y2="164" class="' + (ph0 ? 's-ink' : 's-line') + '" stroke-width="' + (ph0 ? 1.6 : 1) + '"/>';
+    s += '<text x="' + X(u) + '" y="182" text-anchor="middle"' + (ph0 ? ' class="t-ink" font-weight="600"' : '') + '>' + u + '</text>';
+    s += '<text x="' + X(u) + '" y="200" text-anchor="middle">' + (u * SD).toFixed(1) + '</text>';
+    if (ph0) s += '<circle cx="' + X(u) + '" cy="' + mid + '" r="4.5" class="f-ink"/>';
+  }
+  s += '<line x1="' + X(0) + '" y1="' + mid + '" x2="' + X(128) + '" y2="' + mid + '" class="s-line" stroke-width="1"/>';
+  s += '<path d="' + p1 + '" class="f-none s-ink" stroke-width="2"/><path d="' + p2 + '" class="f-none s-muted" stroke-width="2" stroke-dasharray="6 4"/>';
+  s += '<text x="' + X(32) + '" y="24" text-anchor="middle" class="t-ink">one electrical cycle · 4 full steps · 0.8 mm of belt</text>';
+  s += '<text x="8" y="182">µstep</text><text x="8" y="200">mm</text>';
+  s += '<text x="' + (X(64) + 7) + '" y="161" class="t-ink">phase 0</text><text x="' + (X(0) + 7) + '" y="161" class="t-ink">phase 0</text>';
+  s += '<text x="' + X(128) + '" y="224" text-anchor="end">solid: coil 1 current · dashed: coil 2 current · thin lines: full steps</text>';
+  $('cyc-svg').innerHTML = s;
+})();
+
+/* ---------- calculator ---------- */
+function calc() {
+  const rd = Math.max(1, +$('k-rd').value || 40), fs = +$('k-fs').value, ms = +$('k-ms').value;
+  const sd = rd / (fs * ms), ph = ms * 4, cyc = ph * sd;
+  const rows = [
+    ['step_dist', f(sd, 5) + ' mm', 'one microstep of belt'],
+    ['phases', ph, 'microsteps per electrical cycle'],
+    ['cycle_mm', f(cyc, 3) + ' mm', 'belt per cycle; the tick of the ruler'],
+    ['grid pitch', f(cyc / 2, 3) + ' mm', 'head movement in X and in Y for one cycle of one motor'],
+    ['warn at', f(0.15 * cyc, 3) + ' mm', '0.15 cycle, as |Δx| + |Δy| of the head'],
+    ['reject at', f(0.25 * cyc, 3) + ' mm', '0.25 cycle; also the most two probes of one limit may differ, in belt mm']
+  ];
+  $('k-out').innerHTML = rows.map(r => '<tr><td class="n">' + r[0] + '</td><td class="v">' + r[1] + '</td><td>' + r[2] + '</td></tr>').join('');
+}
+['k-rd', 'k-fs', 'k-ms'].forEach(id => $(id).addEventListener('input', calc));
+
+/* ---------- unsnapped_axes model ---------- */
+const U = { set: new Set(), homed: new Set(), log: [] };
+function uShow() {
+  const nm = s => s.size ? '{' + [...s].sort().join(', ') + '}' : 'set()';
+  $('u-set').textContent = nm(U.set);
+  $('u-homed').textContent = U.homed.size ? [...U.homed].sort().map(i => 'xyz'[i]).join('') : 'none';
+  $('u-log').innerHTML = U.log.slice(-9).map(l => '<div class="' + l[0] + '">' + esc(l[1]) + '</div>').join('');
+  $('u-log').scrollTop = 1e6;
+}
+function uHome(axes, label) {
+  U.log.push(['in', '> ' + label]);
+  axes.forEach(a => U.set.delete(a));                       // line 140
+  axes.forEach(a => {
+    U.set.delete(a); U.homed.add(a);                        // home_rails sets the position (line 127)
+    U.set.add(a);                                           // line 156
+    if (U.set.has(0) && U.set.has(1)) {                     // line 157
+      U.set.clear();
+      U.log.push(['', '  ' + 'XYZ'[a] + ' homed: X and Y both real homes, precise step runs']);
+    } else U.log.push(['lg', '  ' + 'XYZ'[a] + ' homed: regular home only']);
+  });
+}
+document.querySelectorAll('[data-u]').forEach(b => b.addEventListener('click', () => {
+  const k = b.dataset.u;
+  if (k === 'g28') uHome([0, 1, 2], 'G28');
+  else if (k === 'x') uHome([0], 'G28 X');
+  else if (k === 'y') uHome([1], 'G28 Y');
+  else if (k === 'skp') { U.log.push(['in', '> SET_KINEMATIC_POSITION X=100 Y=100 Z=10'], ['lg', '  all axes marked homed, all dropped from the set']); U.set.clear(); [0, 1, 2].forEach(a => U.homed.add(a)); }
+  else { U.log.push(['in', '> M18'], ['lg', '  motors off: homed state cleared, set emptied']); U.set.clear(); U.homed.clear(); }
+  uShow();
+}));
+
+/* ---------- simulator ---------- */
+let seed = 20261110;
+function rnd() { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+const uni = s => (rnd() * 2 - 1) * s;
+const S = { dirs: [-1, -1], offset: 5, scatter: 0.05, shift: 0, fault: 'none', moff: [17, 41],
+  origin: null, saved: null, hist: [], home: null, step: 6, lastCal: null, con: [], node: null, play: false };
+const ends = () => [S.dirs[0] > 0 ? 200 : 0, S.dirs[1] > 0 ? 200 : 0];
+const walls = () => { const e = ends(); return [e[0] + S.shift, e[1]]; };
+const cornerOf = (m, e) => [e[0] + m.phys[0] - m.pos[0], e[1] + m.phys[1] - m.pos[1]];
+function say(t, c) { S.con.push([c || '', t]); if (S.con.length > 60) S.con.shift(); }
+function probeErr() {
+  let k = 0;
+  return wall => {
+    const i = k++;
+    if (S.fault === 'early' && i === 0) return -0.7 * 2 * S.offset;
+    if (S.fault === 'disagree' && wall === 0) return (i % 2 ? -0.45 : 0) + uni(0.01);
+    if (S.fault === 'notrig' && i === 0) return Infinity;
+    return uni(2 * S.scatter);
+  };
+}
+function classicHome(m, e, h) {
+  const d = m.dirs, err = [uni(S.scatter), uni(S.scatter)], path = [m.phys.slice()];
+  for (let ax = 0; ax < 2; ax++) {
+    const force = [null, null], move = [null, null];
+    move[ax] = e[ax]; force[ax] = e[ax] - d[ax] * 300;
+    m.homeRails(force, move, err[ax], PH.NAMES[ax]); path.push(m.phys.slice());
+    const back = m.pos.slice(); back[ax] = e[ax] - d[ax] * 5; m.manualMove(back); path.push(m.phys.slice());
+  }
+  if (h) { h.classic = { err: err, pos: m.pos.slice(), phys: m.phys.slice(), corner: cornerOf(m, e) }; h.stages[0] = { path: path }; }
+}
+function newMachine() {
+  const e = ends(), m = new PH.Machine(S.dirs.slice(), walls(), S.moff);
+  m.quant = true;
+  m.phys = [e[0] - S.dirs[0] * (8.5 + 2.5 * rnd()), e[1] - S.dirs[1] * (8.5 + 2.5 * rnd())]; m.settle();
+  return m;
+}
+function simulateHome() {
+  const e = ends(), m = newMachine();
+  const h = { dirs: S.dirs.slice(), ends: e, walls: walls(), offset: S.offset, moff: S.moff, stages: [], last: 0, log: {}, originAt: S.origin && S.origin.slice() };
+  say('> G28 X Y', 'in');
+  classicHome(m, e, h);
+  if (!S.origin) { h.uncal = true; say('corexy precise homing: not calibrated; run COREXY_HOMING_CALIBRATE'); return h; }
+  const cfg = { ends: e, offset: S.offset }, L = h.log;
+  let r;
+  try { r = PH.measureCycles(m, cfg, [0, 0], probeErr(), L); }
+  catch (er) { h.error = er.message; h.failAt = er.stage || L.cur; say('!! ' + er.message, 'e'); say('motors off; X and Y are no longer homed', 'lg'); }
+  if (L.parkPhys) { h.stages[1] = { path: [h.classic.phys, L.parkPhys] }; h.last = 1; }
+  if (L.startPhys) { h.stages[2] = { path: [L.parkPhys, L.startPhys] }; h.last = 2; }
+  (L.walls || []).forEach((wl, w) => {
+    const p = [L.startPhys]; wl.probes.forEach(pr => { p.push(pr.trig, L.startPhys); });
+    h.stages[3 + w] = { path: p }; h.last = 3 + w;
+  });
+  if (!r) return h;
+  h.stages[5] = { path: [L.startPhys] }; h.stages[6] = { path: [L.startPhys] }; h.last = 6;
+  const sp = L.startPhys;
+  h.measured = [sp[0] + 0.5 * (r.c[0] + r.c[1]) * CYC, sp[1] + 0.5 * (r.c[0] - r.c[1]) * CYC];
+  try {
+    h.snap = PH.snapHome(m, cfg, S, r.c, r.cycle_mm); h.ok = true;
+    h.snapped = cornerOf(m, e); S.node = h.snapped;
+    if (h.snap.warn) say(h.snap.warn, 'w');
+    say('klippy.log: ' + h.snap.log, 'lg');
+  } catch (er) {
+    h.error = er.message; h.failAt = 6; h.snap = er.detail;
+    say('!! ' + er.message, 'e'); say('precise_origin forgotten in memory; motors off', 'lg');
+  }
+  return h;
+}
+function commit(h) {
+  S.home = h;
+  S.hist.push({ classic: h.classic.corner, measured: h.measured || null, snapped: h.snapped || null });
+  if (S.hist.length > 60) S.hist.shift();
+}
+function simCalibrate() {
+  const e = ends(), m = newMachine(), cfg = { ends: e, offset: S.offset };
+  say('> G28 X Y', 'in'); classicHome(m, e, null);
+  say('> COREXY_HOMING_CALIBRATE', 'in');
+  const keep = S.fault; if (S.fault !== 'disagree') S.fault = 'none';
+  try {
+    const r = PH.calibrate(m, cfg, S, 5, probeErr(), t => say(t));
+    S.lastCal = r; S.saved = r.origin.slice();
+    say('printer: corexy_precise_homing_origin: ' + f(r.origin[0]) + ', ' + f(r.origin[1]));
+    say('> SAVE_CONFIG', 'in');
+  } catch (er) { say('!! ' + er.message, 'e'); }
+  S.fault = keep; S.hist = [];
+}
+
+/* ---------- step content ---------- */
+const STEPS = [
+  { name: 'Regular home', head: 'corexy.py · home()', text: 'G28 homes X and then Y exactly as before the PR. Each stall point is declared to be position_endstop, so the stall error goes straight into Klipper\'s coordinates. The new part is the bookkeeping: once X and Y both hold a position from a real home, the precise step runs.',
+    code: [[140, 'self.unsnapped_axes.difference_update(homing_state.get_axes())'], [141, 'for axis in homing_state.get_axes():'], 0, [154, '    homing_state.home_rails([rail], forcepos, homepos)'], [156, '    self.unsnapped_axes.add(axis)'], [157, '    if self.precise_homing and {0, 1} <= self.unsnapped_axes:'], [158, '        self.unsnapped_axes.clear()'], [159, '        if self.precise_origin is None:'], [160, '            ...respond_info("... not calibrated; run COREXY_HOMING_CALIBRATE")'], [164, '        else:'], [165, '            self._snap_home(*self._measure_cycles(homing_state))']] },
+  { name: 'Park', head: 'corexy.py · _measure_cycles()', text: 'The head moves to `offset` mm from both limits, in the slightly wrong coordinates the regular home left behind.',
+    code: [[185, 'his = [rail.get_homing_info() for rail in self.rails[:2]]'], [186, 'dirs = [1.0 if hi.positive_dir else -1.0 for hi in his]'], [187, 'offset, speed = self.precise_offset, his[0].retract_speed'], [188, 'park = [hi.position_endstop - d * offset for hi, d in zip(his, dirs)]'], [189, 'toolhead.manual_move(park, speed)']] },
+  { name: 'Phase align', head: 'corexy.py · _measure_cycles()', text: 'Each motor is stepped forward to its next phase 0. The head now stands on a crossing of the grid, so every distance measured from here is counted from the start of a cycle on both motors.',
+    code: [[193, 'for s, tmc, g in zip(steppers, self.tmc, grid):'], [194, '    moff, phases = tmc.get_phase_offset()'], [195, '    if moff is None: ... raise "Stepper %s phase unknown"'], [201, '    steps = (-(s.get_mcu_position() + moff)) % phases - g * phases'], [202, '    cycle_mm.append(phases * s.get_step_dist())'], [203, '    nudge.append(steps * s.get_step_dist())'], [204, 'self._move_ab(*nudge, speed)'], [205, 'start = toolhead.get_position()']] },
+  { name: 'Probe X limit', head: 'corexy.py · _measure_cycles()', text: 'One motor turns and the other holds on phase 0. The head runs on a diagonal into the X limit and away from the Y limit. Each probe is a normal homing move in a temporary frame that places the limit at movepos, watching only the turning motor\'s StallGuard. After each stall the motor steps back to its exact starting step count.',
+    code: null },
+  { name: 'Probe Y limit', head: 'corexy.py · _measure_cycles()', text: 'The same motor turns the other way, so the head runs into the Y limit and away from X. The same checks apply.', code: null },
+  { name: 'Count cycles', head: 'corexy.py · _measure_cycles()', text: 'The coordinates are put back to what they were at the start point. A motor travel of d moved the head d / 2 on each axis, so the corner lies (dx / 2, dy / 2) from the start. In motor terms that is A = (dx + dy) / 2 and B = (dx − dy) / 2, divided by cycle_mm to count cycles.',
+    code: [[242, 'toolhead.set_position(start)'], [243, 'dx, dy = dirs[0] * dists[0], dirs[1] * dists[1]'], [244, 'c = [0.5 * (dx + dy) / cycle_mm[0], 0.5 * (dx - dy) / cycle_mm[1]]'], [245, 'return c, cycle_mm']] },
+  { name: 'Snap', head: 'corexy.py · _snap_home()', text: 'Subtract the calibrated origin and round. n is the whole number of cycles from the start point to the grid point that Klipper will call the corner. The distance from a whole number is the drift. If it passes, the toolhead position is rewritten from n alone, so the stall noise in c never reaches the coordinates.',
+    code: [[248, 'rel = [ci - oi for ci, oi in zip(c, self.precise_origin)]'], [249, 'n = [round(r) for r in rel]'], [250, 'drift = max(abs(r - ni) for r, ni in zip(rel, n))'], [251, 'if drift > MAX_PHASE_ERROR:'], [253, '    origin, self.precise_origin = self.precise_origin, None'], [254, '    raise command_error("... do not match origin ...")'], [259, 'if drift > WARN_PHASE_ERROR:'], [260, '    respond_info("... phase origin has drifted %.2f cycles ...")'], [267, 'a, b = n[0] * cycle_mm[0], n[1] * cycle_mm[1]'], [268, 'ex, ey = [r.get_homing_info().position_endstop for r in self.rails[:2]]'], [270, 'pos[:2] = [ex - 0.5 * (a + b), ey - 0.5 * (a - b)]'], [271, 'self.toolhead.set_position(pos)']] }
+];
+STEPS[3].code = STEPS[4].code = [[206, 'm = int(dirs[0] == dirs[1])'], [207, 'rail, s = DiagonalProbeRail(self.rails[m]), steppers[m]'], [208, 'start_mcu = s.get_mcu_position()'], [210, 'for wall in (0, 1):'], [214, '    vec = [-d * 2.0 * offset for d in dirs]'], [215, '    vec[wall] = -vec[wall]'], [216, '    forcepos = start[:2] + [None]'], [217, '    forcepos[wall] = his[wall].position_endstop - vec[wall]'], [218, '    movepos = [forcepos[0] + vec[0], forcepos[1] + vec[1], None]'], [219, '    min_dist = abs(his[wall].position_endstop - start[wall])'], [221, '    for _ in range(PROBES_PER_WALL + PROBE_RETRIES):'], [222, '        homing_state.home_rails([rail], forcepos, movepos)'], [223, '        trig = homing_state.get_trigger_position(s.get_name())'], [226, '        back[m] = (start_mcu - s.get_mcu_position()) * s.get_step_dist()'], [227, '        self._move_ab(*back, speed)'], [228, '        samples.append(abs(trig - start_mcu) * s.get_step_dist())'], [229, '        last = samples[-PROBES_PER_WALL:]'], [230, '        if (len(last) == PROBES_PER_WALL'], [232, '                and min(last) > min_dist'], [233, '                and max(last) - min(last) <= MAX_PHASE_ERROR * cycle_mm[m]):'], [235, '            dists.append(sum(last) / PROBES_PER_WALL)'], [236, '            break'], [237, '    else:'], [238, '        raise command_error("... inconsistent %s wall probes (%s)")']];
+
+const SIM = '<span class="sim">simulated</span> ';
+function rowsFor(h, st) {
+  const L = h.log, e = h.ends, R = [];
+  const mot = i => i === 0 ? 'stepper_x (motor A)' : 'stepper_y (motor B)';
+  if (st === 0) {
+    R.push(['homing_state.get_axes()', '[0, 1]', 'X, then Y, each with the regular sensorless home.']);
+    R.push(['stall error X', sg(h.classic.err[0]) + ' mm', SIM + 'How far from the true limit StallGuard fired. Klipper cannot see this.']);
+    R.push(['stall error Y', sg(h.classic.err[1]) + ' mm', SIM + 'Same for Y.']);
+    R.push(['toolhead.get_position()', A(h.classic.pos), 'What Klipper believes after the regular home and its 5 mm retract.']);
+    R.push(['real position', A(h.classic.phys), SIM + 'Where the head really is. The difference is the stall error.']);
+    R.push(['unsnapped_axes', '{0, 1} → set()', 'Both hold a real home, so the set is cleared and the precise step runs.']);
+    R.push(['precise_origin', h.originAt ? A(h.originAt) : 'None', h.originAt ? 'Calibrated, so measure and snap.' : 'Not calibrated: print the notice and stop here.']);
+  } else if (st === 1) {
+    R.push(['dirs', A(h.dirs, 1), '−1 homes toward min, +1 toward max. From positive_dir of each rail.']);
+    R.push(['offset', f(h.offset, 1), 'corexy_precise_homing_offset.']);
+    R.push(['speed', '50.0', 'his[0].retract_speed: homing_retract_speed of stepper_x. Used for every non-probing move.']);
+    R.push(['park', A(L.park), 'position_endstop − dir × offset on each axis.']);
+  } else if (st === 2) {
+    L.nudge.forEach((n, i) => {
+      R.push([PH.NAMES[i] + ' mcu_position', n.mcu, 'Step counter of ' + mot(i) + ' at the park position.']);
+      R.push(['moff', n.moff, 'From the TMC driver. (mcu_position + moff) % ' + PHASES + ' = ' + n.phase + ', the phase before the nudge.']);
+      R.push(['steps → nudge', n.steps + ' → ' + f(n.mm) + ' mm', 'Microsteps forward to the next phase 0, and the same in mm of belt.']);
+    });
+    R.push(['cycle_mm', A(L.cycle_mm, 1), 'phases × step_dist = ' + PHASES + ' × ' + SD + '.']);
+    R.push(['start', A(L.start), 'Coordinates after the nudge. Both motors are on phase 0 here.']);
+  } else if (st === 3 || st === 4) {
+    const w = st - 3, wl = L.walls[w], lim = PH.MAX * L.cycle_mm[L.m];
+    R.push(['m', L.m + ' → ' + mot(L.m), (h.dirs[0] === h.dirs[1] ? 'X and Y home the same way, so motor B alone reaches both limits.' : 'X and Y home opposite ways, so motor A alone reaches both limits.') + ' ' + mot(1 - L.m) + ' holds.']);
+    R.push(['probe speed', '35.36 mm/s', 'DiagonalProbeRail: homing_speed × √0.5 for the head, so the motor still turns at 50 mm/s. No retract, no rehome.']);
+    R.push(['vec', A(wl.vec, 1), 'Head travel allowed in the temporary frame: 2 × offset toward this limit, and the same away from the other.']);
+    R.push(['forcepos → movepos', A(wl.forcepos) + ' → ' + A(wl.movepos), 'The frame is forced so that this limit sits at movepos, like a regular home.']);
+    R.push(['min_dist', f(wl.min_dist) + ' mm', 'Half the expected motor travel. A stall at or before this is early.']);
+    wl.probes.forEach((p, i) => {
+      const prev = i ? wl.probes[i - 1].sample : null;
+      let v = p.sample > wl.min_dist ? '' : 'early; ';
+      v += prev == null ? 'needs a second probe' : (Math.abs(p.sample - prev) <= lim + 1e-12 ? 'within ' + f(lim, 2) + ' of the previous' : 'differs from the previous by ' + f(Math.abs(p.sample - prev)));
+      R.push(['samples[' + i + ']', f(p.sample) + ' mm', 'Motor travel to the stall: |trig − start_mcu| × step_dist. ' + v + '.']);
+    });
+    R.push(['dists[' + w + ']', wl.dist == null ? 'none' : f(wl.dist) + ' mm', wl.dist == null ? 'No accepted pair.' : 'Mean of the last two samples.']);
+  } else if (st === 5) {
+    R.push(['dx', sg(L.dx) + ' mm', 'dirs[0] × dists[0]: signed motor travel to the X limit.']);
+    R.push(['dy', sg(L.dy) + ' mm', 'dirs[1] × dists[1]: signed motor travel to the Y limit.']);
+    R.push(['corner from start', A([L.dx / 2, L.dy / 2]) + ' mm', 'Half the motor travel on each axis.']);
+    R.push(['c', A(L.c), 'The corner in cycles of motor A and motor B, counted from the start.']);
+  } else {
+    const s = h.snap;
+    R.push(['precise_origin', A(s.origin), 'corexy_precise_homing_origin.']);
+    R.push(['rel', A(s.rel), 'c − origin.']);
+    R.push(['n', '[' + s.n.join(', ') + ']', 'round(rel): whole cycles to the corner grid point.']);
+    R.push(['drift', f(s.drift) + ' cycles', 'Largest distance of rel from a whole number. Warns above ' + PH.WARN + ', rejects above ' + PH.MAX + '.']);
+    if (h.ok) {
+      R.push(['a, b', f(s.a, 1) + ', ' + f(s.b, 1) + ' mm', 'n × cycle_mm: belt travel of each motor from the start to the corner grid point.']);
+      R.push(['pos[:2]', A(s.pos), 'New coordinates of the head: ex − (a + b) / 2, ey − (a − b) / 2. The head does not move.']);
+      R.push(['change', A([s.pos[0] - L.start[0], s.pos[1] - L.start[1]]) + ' mm', 'How far the snap moved the coordinates from the regular home.']);
+    } else R.push(['precise_origin', 'None', 'Forgotten in memory. The home fails and the motors are turned off.']);
+  }
+  return R;
+}
+
+/* ---------- drawing ---------- */
+function latticeLines(X, Y, x0, y0, w, moff) {
+  let pa = '', pb = '';
+  const amin = x0 + y0, amax = amin + 2 * w, bmin = x0 - y0 - w, bmax = x0 - y0 + w;
+  for (let k = Math.ceil((amin / SD + moff[0]) / PHASES); k <= Math.floor((amax / SD + moff[0]) / PHASES); k++) {
+    const a = (PHASES * k - moff[0]) * SD;
+    pa += 'M' + X(x0).toFixed(1) + ' ' + Y(a - x0).toFixed(1) + 'L' + X(x0 + w).toFixed(1) + ' ' + Y(a - x0 - w).toFixed(1);
+  }
+  for (let k = Math.ceil((bmin / SD + moff[1]) / PHASES); k <= Math.floor((bmax / SD + moff[1]) / PHASES); k++) {
+    const b = (PHASES * k - moff[1]) * SD;
+    pb += 'M' + X(x0).toFixed(1) + ' ' + Y(x0 - b).toFixed(1) + 'L' + X(x0 + w).toFixed(1) + ' ' + Y(x0 + w - b).toFixed(1);
+  }
+  return [pa, pb];
+}
+function wallsSvg(h, X, Y, x0, y0, w, size, id) {
+  const d = h.dirs, wl = h.walls;
+  const rx = d[0] < 0 ? [x0, wl[0]] : [wl[0], x0 + w], ry = d[1] < 0 ? [y0, wl[1]] : [wl[1], y0 + w];
+  let s = '<defs><pattern id="' + id + '" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="9" class="s-muted" stroke-width="2"/></pattern></defs>';
+  s += '<rect x="' + X(rx[0]) + '" y="0" width="' + (X(rx[1]) - X(rx[0])) + '" height="' + size + '" fill="url(#' + id + ')" opacity="0.55"/>';
+  s += '<rect x="0" y="' + Y(ry[1]) + '" width="' + size + '" height="' + (Y(ry[0]) - Y(ry[1])) + '" fill="url(#' + id + ')" opacity="0.55"/>';
+  s += '<line x1="' + X(wl[0]) + '" y1="0" x2="' + X(wl[0]) + '" y2="' + size + '" class="s-ink" stroke-width="2.5"/>';
+  s += '<line x1="0" y1="' + Y(wl[1]) + '" x2="' + size + '" y2="' + Y(wl[1]) + '" class="s-ink" stroke-width="2.5"/>';
+  return s;
+}
+let MX, MY;
+function renderMain() {
+  const h = S.home, d = h.dirs, e = h.ends, st = S.step, L = h.log, W = 15, sc = 40;
+  const x0 = d[0] < 0 ? e[0] - 1.5 : e[0] - 13.5, y0 = d[1] < 0 ? e[1] - 1.5 : e[1] - 13.5;
+  const X = MX = x => (x - x0) * sc, Y = MY = y => 600 - (y - y0) * sc;
+  const P = p => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1);
+  const ll = latticeLines(X, Y, x0, y0, W, h.moff);
+  let s = '<path d="' + ll[0] + '" class="f-none s-a" stroke-width="1" opacity="0.3"/><path d="' + ll[1] + '" class="f-none s-b" stroke-width="1" opacity="0.3"/>';
+  s += wallsSvg(h, X, Y, x0, y0, W, 600, 'hatM');
+  const ax = d[0] < 0 ? 'start' : 'end';
+  s += '<text x="' + (X(h.walls[0]) - d[0] * 10) + '" y="' + (d[1] < 0 ? 24 : 588) + '" text-anchor="' + ax + '" class="t-ink" font-size="15" font-weight="600">X limit</text>';
+  s += '<text x="' + (d[0] < 0 ? 588 : 12) + '" y="' + (Y(h.walls[1]) + (d[1] < 0 ? -10 : 22)) + '" text-anchor="' + (d[0] < 0 ? 'end' : 'start') + '" class="t-ink" font-size="15" font-weight="600">Y limit</text>';
+  const mc = L.m === 0 ? 's-a' : 's-b', mf = L.m === 0 ? 'f-a' : 'f-b';
+  // earlier probe paths, faint
+  [3, 4].forEach(k => { if (st > k && h.stages[k]) s += '<polyline points="' + h.stages[k].path.map(P).join(' ') + '" class="f-none ' + mc + '" stroke-width="2" opacity="0.4"/>'; });
+  const cur = h.stages[st];
+  if (cur && cur.path.length > 1) s += '<polyline points="' + cur.path.map(P).join(' ') + '" class="f-none ' + (st >= 3 ? mc : 's-ink') + '" stroke-width="2.5"' + (st >= 3 ? '' : ' stroke-dasharray="7 5"') + ' stroke-linejoin="round"/>';
+  if (st >= 1 && L.parkPhys) { const px = X(L.parkPhys[0]), py = Y(L.parkPhys[1]); s += '<path d="M' + (px - 8) + ' ' + py + 'h16M' + px + ' ' + (py - 8) + 'v16" class="s-muted" stroke-width="2"/><text x="' + (px - d[0] * 24) + '" y="' + (py + d[1] * 34 + 5) + '" text-anchor="' + (d[0] < 0 ? 'start' : 'end') + '" font-size="14">park</text>'; }
+  if (st >= 2 && L.startPhys) s += '<circle cx="' + X(L.startPhys[0]) + '" cy="' + Y(L.startPhys[1]) + '" r="15" class="f-none s-ok" stroke-width="2.5"/>';
+  [3, 4].forEach(k => { if (st >= k && L.walls && L.walls[k - 3]) { const wl = L.walls[k - 3], n = wl.probes.length;
+    wl.probes.forEach((p, i) => { const acc = wl.dist != null && i >= n - 2;
+      s += '<circle cx="' + X(p.trig[0]) + '" cy="' + Y(p.trig[1]) + '" r="6" class="' + (acc ? mf : 'f-surface') + ' ' + mc + '" stroke-width="2"/>'; }); } });
+  const snapNow = st >= 6 && h.ok, c = snapNow ? h.snapped : h.classic.corner;
+  s += '<circle cx="' + X(c[0]) + '" cy="' + Y(c[1]) + '" r="11" class="f-none s-err" stroke-width="2.5"/><path d="M' + (X(c[0]) - 18) + ' ' + Y(c[1]) + 'h36M' + X(c[0]) + ' ' + (Y(c[1]) - 18) + 'v36" class="s-err" stroke-width="1.5"/>';
+  s += '<text x="' + (X(c[0]) - d[0] * 22) + '" y="' + (Y(c[1]) + d[1] * 30 + 5) + '" text-anchor="' + ax + '" class="t-err" font-size="14" font-weight="600">(' + e[0] + ', ' + e[1] + ')</text>';
+  s += '<g id="m-head"><circle r="12" class="f-ink" opacity="0.92"/><circle r="4" class="f-surface"/></g>';
+  $('m-svg').innerHTML = s;
+}
+function moveHead(p, st) {
+  const g = $('m-head'); if (g) g.setAttribute('transform', 'translate(' + MX(p[0]).toFixed(1) + ' ' + MY(p[1]).toFixed(1) + ')');
+  const h = S.home, ph = [0, 1].map(i => PH.mod(Math.round((i ? p[0] - p[1] : p[0] + p[1]) / SD) + h.moff[i], PHASES));
+  drawDial('d-a', ph[0], 's-a'); drawDial('d-b', ph[1], 's-b');
+  $('d-as').textContent = 'phase ' + ph[0] + ' / ' + PHASES; $('d-bs').textContent = 'phase ' + ph[1] + ' / ' + PHASES;
+  const role = i => st <= 2 ? (st === 0 ? 'both turn: regular home' : 'both turn') : st <= 4 ? (i === h.log.m ? 'turning: probes' : 'holding on phase 0') : 'still, on phase 0';
+  $('d-ar').textContent = role(0); $('d-br').textContent = role(1);
+}
+function drawDial(id, ph, cls) {
+  let s = '<circle cx="50" cy="50" r="40" class="f-none s-line" stroke-width="6"/>';
+  for (let k = 0; k < 16; k++) { const a = k / 16 * 2 * Math.PI, r1 = k % 4 ? 37 : 33;
+    s += '<line x1="' + (50 + r1 * Math.sin(a)).toFixed(1) + '" y1="' + (50 - r1 * Math.cos(a)).toFixed(1) + '" x2="' + (50 + 43 * Math.sin(a)).toFixed(1) + '" y2="' + (50 - 43 * Math.cos(a)).toFixed(1) + '" class="s-muted" stroke-width="' + (k % 4 ? 1 : 2) + '"/>'; }
+  s += '<line x1="50" y1="50" x2="50" y2="14" class="' + cls + '" stroke-width="4" stroke-linecap="round" transform="rotate(' + (ph / PHASES * 360) + ' 50 50)"/><circle cx="50" cy="50" r="5" class="f-ink"/>';
+  s += '<text x="50" y="9" text-anchor="middle" font-size="9">0</text>';
+  $(id).innerHTML = s;
+}
+function renderZoom() {
+  const h = S.home, e = h.ends, st = S.step, sc = 150, half = 1.2;
+  const X = x => 180 + (x - e[0]) * sc, Y = y => 180 - (y - e[1]) * sc;
+  const x0 = e[0] - half, y0 = e[1] - half, w = 2 * half;
+  const ll = latticeLines(X, Y, x0, y0, w, h.moff);
+  let s = wallsSvg(h, X, Y, x0, y0, w, 360, 'hatZ');
+  s += '<path d="' + ll[0] + '" class="f-none s-a" stroke-width="1" opacity="0.45"/><path d="' + ll[1] + '" class="f-none s-b" stroke-width="1" opacity="0.45"/>';
+  const o = h.originAt || S.origin || S.saved;
+  if (S.node && o) {
+    const cx = S.node[0] + 0.5 * (o[0] + o[1]) * CYC, cy = S.node[1] + 0.5 * (o[0] - o[1]) * CYC;
+    const dia = q => [[cx + q, cy], [cx, cy + q], [cx - q, cy], [cx, cy - q]].map(p => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ');
+    s += '<polygon points="' + dia(PH.MAX * CYC) + '" class="f-warn s-warn" fill-opacity="0.2" stroke-width="1"/><polygon points="' + dia(PH.WARN * CYC) + '" class="f-ok s-ok" fill-opacity="0.25" stroke-width="1"/>';
+  }
+  const hist = S.hist.slice(0, -1);
+  hist.forEach(r => { s += '<circle cx="' + X(r.classic[0]) + '" cy="' + Y(r.classic[1]) + '" r="5" class="f-none s-muted" stroke-width="1.5" opacity="0.75"/>'; });
+  hist.forEach(r => { if (r.measured) s += '<circle cx="' + X(r.measured[0]) + '" cy="' + Y(r.measured[1]) + '" r="2.6" class="f-ink" opacity="0.6"/>'; });
+  hist.forEach(r => { if (r.snapped) s += '<circle cx="' + X(r.snapped[0]) + '" cy="' + Y(r.snapped[1]) + '" r="6" class="f-err"/>'; });
+  const c = h.classic.corner;
+  s += '<circle cx="' + X(c[0]) + '" cy="' + Y(c[1]) + '" r="7" class="f-surface s-ink" stroke-width="2.5"/>';
+  if (st >= 5 && h.measured) s += '<circle cx="' + X(h.measured[0]) + '" cy="' + Y(h.measured[1]) + '" r="4.5" class="f-ink"/>';
+  if (st >= 6 && h.ok) {
+    s += '<line x1="' + X(h.measured[0]) + '" y1="' + Y(h.measured[1]) + '" x2="' + X(h.snapped[0]) + '" y2="' + Y(h.snapped[1]) + '" class="s-ink" stroke-width="1.5" stroke-dasharray="4 3"/>';
+    s += '<circle cx="' + X(h.snapped[0]) + '" cy="' + Y(h.snapped[1]) + '" r="8" class="f-err"/><circle cx="' + X(h.snapped[0]) + '" cy="' + Y(h.snapped[1]) + '" r="13" class="f-none s-err" stroke-width="2"/>';
+  }
+  s += '<line x1="20" y1="342" x2="80" y2="342" class="s-ink" stroke-width="2"/><text x="88" y="346" class="t-ink">0.4 mm</text>';
+  $('z-svg').innerHTML = s; $('z-n').textContent = S.hist.length;
+}
+function renderStats() {
+  const sp = k => { const v = S.hist.filter(r => r[k]).map(r => r[k]); if (v.length < 2) return null;
+    return [0, 1].map(i => Math.max(...v.map(p => p[i])) - Math.min(...v.map(p => p[i]))); };
+  const c = sp('classic'), n = sp('snapped');
+  $('s-stat').innerHTML = '<span>Spread of the home position over ' + S.hist.length + ' homes</span>' +
+    '<span>regular: <b>' + (c ? 'X ' + f(c[0]) + ', Y ' + f(c[1]) + ' mm' : 'n/a') + '</b></span>' +
+    '<span>with the snap: <b>' + (n ? 'X ' + f(n[0]) + ', Y ' + f(n[1]) + ' mm' : 'n/a') + '</b></span>';
+}
+function renderPanel() {
+  const h = S.home, st = S.step, sd = STEPS[st];
+  $('s-chips').innerHTML = STEPS.map((x, i) => '<button type="button" class="chip' + (h.failAt === i ? ' bad' : '') + '" data-i="' + i + '" aria-current="' + (i === st) + '"' + (i > h.last ? ' disabled' : '') + '><b>' + (i + 1) + '</b>' + x.name + '</button>').join('');
+  $('s-text').textContent = sd.text;
+  $('s-codeh').textContent = sd.head;
+  $('s-code').innerHTML = sd.code.map(l => l ? '<div><i>' + l[0] + '</i>' + esc(l[1]) + '</div>' : '<div class="gap"><i>.</i></div>').join('');
+  let rows = rowsFor(h, st).map(r => '<tr><td class="n">' + esc(r[0]) + '</td><td class="v">' + esc(r[1]) + '</td><td>' + r[2] + '</td></tr>').join('');
+  if (h.error && h.failAt === st) rows += '<tr><td class="n">error</td><td class="v" colspan="2" style="color:var(--err)">' + esc(h.error) + '</td></tr>';
+  $('s-vals').innerHTML = rows;
+  const pill = $('s-pill');
+  if (h.uncal) { pill.className = 'pill off'; pill.textContent = 'NOT CALIBRATED'; }
+  else if (h.error) { pill.className = 'pill err'; pill.textContent = h.failAt === 6 ? 'REJECTED · DRIFT ' + f(h.snap.drift, 2) : 'PROBE ERROR'; }
+  else if (h.snap.warn) { pill.className = 'pill warn'; pill.textContent = 'SNAPPED · WARNING · DRIFT ' + f(h.snap.drift, 2); }
+  else { pill.className = 'pill ok'; pill.textContent = 'SNAPPED · DRIFT ' + f(h.snap.drift, 2); }
+  $('s-prev').disabled = st === 0; $('s-next').disabled = st >= h.last;
+  $('s-con').innerHTML = S.con.slice(-40).map(l => '<div class="' + l[0] + '">' + esc(l[1]) + '</div>').join('');
+  $('s-con').scrollTop = 1e6;
+}
+function renderCal() {
+  const r = S.lastCal; if (!r) return;
+  $('c-rows').innerHTML = r.results.map((c, i) => '<tr><td class="n">' + (i + 1) + '</td><td class="v">(' + r.grids[i].join(', ') + ')</td><td class="v">' + f(c[0]) + '</td><td class="v">' + f(c[1]) + '</td></tr>').join('') +
+    '<tr><td class="n" colspan="2">corexy_precise_homing_origin</td><td class="v">' + f(r.origin[0]) + '</td><td class="v">' + f(r.origin[1]) + '</td></tr>';
+  [['c-a', 0, 'a'], ['c-b', 1, 'b']].forEach(q => {
+    const o = r.origin[q[1]], pt = (fr, R) => [70 + R * Math.sin(2 * Math.PI * fr), 70 - R * Math.cos(2 * Math.PI * fr)];
+    const p1 = pt(o - PH.WARN, 44), p2 = pt(o + PH.WARN, 44), po = pt(o, 38);
+    let s = '<circle cx="70" cy="70" r="44" class="f-none s-line" stroke-width="2"/>';
+    s += '<path d="M70 70L' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1) + 'A44 44 0 0 1 ' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1) + 'Z" class="f-ok" opacity="0.22"/>';
+    [[0, '0'], [0.25, '+¼'], [0.5, '±½'], [0.75, '−¼']].forEach(t => { const a = pt(t[0], 44), b = pt(t[0], 49), c = pt(t[0], 58);
+      s += '<line x1="' + a[0].toFixed(1) + '" y1="' + a[1].toFixed(1) + '" x2="' + b[0].toFixed(1) + '" y2="' + b[1].toFixed(1) + '" class="s-muted" stroke-width="1.5"/><text x="' + c[0].toFixed(1) + '" y="' + (c[1] + 3).toFixed(1) + '" text-anchor="middle" font-size="9">' + t[1] + '</text>'; });
+    s += '<line x1="70" y1="70" x2="' + po[0].toFixed(1) + '" y2="' + po[1].toFixed(1) + '" class="s-' + q[2] + '" stroke-width="3" stroke-linecap="round"/>';
+    r.results.forEach(c => { const p = pt(c[q[1]], 44); s += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.5" class="f-ink"/>'; });
+    s += '<circle cx="70" cy="70" r="4" class="f-ink"/>';
+    $(q[0]).innerHTML = s;
+    $(q[0] + 's').textContent = 'origin ' + f(o) + ' · spread ' + f(r.spreads[q[1]]);
+  });
+}
+
+/* ---------- stepping and animation ---------- */
+let raf = 0, timer = 0;
+function pathLen(p) { let l = 0; for (let i = 1; i < p.length; i++) l += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); return l; }
+function along(p, t) {
+  const tot = pathLen(p); if (!tot || t >= 1) return p[p.length - 1];
+  let want = tot * t;
+  for (let i = 1; i < p.length; i++) { const seg = Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+    if (want <= seg) { const k = seg ? want / seg : 0; return [p[i - 1][0] + k * (p[i][0] - p[i - 1][0]), p[i - 1][1] + k * (p[i][1] - p[i - 1][1])]; }
+    want -= seg; }
+  return p[p.length - 1];
+}
+function show(st, animate) {
+  cancelAnimationFrame(raf); clearTimeout(timer);
+  const h = S.home; S.step = Math.max(0, Math.min(st, h.last));
+  renderMain(); renderZoom(); renderPanel(); renderStats();
+  const path = h.stages[S.step].path, done = () => {
+    moveHead(path[path.length - 1], S.step);
+    if (S.play) { if (S.step < h.last) timer = setTimeout(() => show(S.step + 1, true), 650); else S.play = false; }
+  };
+  if (!animate || reduced || path.length < 2) { if (animate && S.play && !reduced) { moveHead(path[path.length - 1], S.step); timer = setTimeout(done, 900); } else done(); return; }
+  const dur = Math.max(600, Math.min(2800, 350 + pathLen(path) * 55)), t0 = performance.now();
+  const tick = now => { const t = Math.min(1, (now - t0) / dur); moveHead(along(path, t), S.step); if (t < 1) raf = requestAnimationFrame(tick); else done(); };
+  raf = requestAnimationFrame(tick);
+}
+function instantHome(n) { for (let i = 0; i < n; i++) commit(simulateHome()); S.play = false; show(S.home.last, false); }
+function restart(quiet) { S.origin = S.saved ? S.saved.slice() : null; if (!quiet) say('> RESTART   (saved origin loaded: ' + (S.saved ? f(S.saved[0]) + ', ' + f(S.saved[1]) : 'none') + ')', 'in'); }
+function readCtl() {
+  S.offset = +$('s-off').value; S.scatter = +$('s-sc').value; S.shift = +$('s-sh').value; S.fault = $('s-ft').value;
+  $('s-offo').textContent = f(S.offset, 1) + ' mm'; $('s-sco').textContent = '±' + f(S.scatter, 2) + ' mm'; $('s-sho').textContent = sg(S.shift, 2) + ' mm';
+}
+$('s-chips').addEventListener('click', ev => { const b = ev.target.closest('.chip'); if (b && !b.disabled) { S.play = false; show(+b.dataset.i, true); } });
+$('s-prev').addEventListener('click', () => { S.play = false; show(S.step - 1, false); });
+$('s-next').addEventListener('click', () => { S.play = false; show(S.step + 1, true); });
+$('s-go').addEventListener('click', () => { commit(simulateHome()); S.play = true; show(0, true); });
+$('s-20').addEventListener('click', () => instantHome(20));
+$('s-cal').addEventListener('click', () => { simCalibrate(); renderCal(); instantHome(1); });
+$('s-rst').addEventListener('click', () => { restart(); instantHome(1); });
+['s-dx', 's-dy'].forEach(id => $(id).addEventListener('change', () => {
+  S.dirs = [+$('s-dx').value, +$('s-dy').value]; S.node = null; S.origin = S.saved = null;
+  say('homing direction changed: the old origin no longer applies', 'lg'); simCalibrate(); renderCal(); instantHome(6);
+}));
+$('s-off').addEventListener('input', () => { readCtl(); restart(true); S.hist = []; instantHome(1); });
+$('s-sc').addEventListener('input', () => { readCtl(); restart(true); instantHome(1); });
+$('s-sh').addEventListener('input', () => { readCtl(); restart(true); S.hist = []; instantHome(1); });
+$('s-ft').addEventListener('change', () => { readCtl(); restart(true); instantHome(1); });
+
+/* ---------- boot ---------- */
+gantry(); calc(); uHome([0, 1, 2], 'G28'); uShow();
+readCtl(); simCalibrate(); renderCal(); instantHome(8);
+})();
+</script>
+</body>
+</html>
