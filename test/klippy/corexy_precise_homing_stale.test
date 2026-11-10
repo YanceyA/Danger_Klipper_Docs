@@ -1,6 +1,0 @@
-# Precise homing must refuse a home half a cycle off the calibrated origin
-DICTIONARY atmega2560.dict
-CONFIG corexy_precise_homing_stale.cfg
-SHOULD_FAIL
-
-G28

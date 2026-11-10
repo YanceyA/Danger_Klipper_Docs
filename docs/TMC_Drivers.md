@@ -423,15 +423,17 @@ homing move drives both motors, and the stall that ends the move is
 detected by one driver while the other motor is also pushing, at
 whatever electrical phase the two motors happen to be in. Kalico can
 optionally refine the regular sensorless home of X and Y by snapping
-it to the electrical cycles of the motors. The method comes from
-Prusa's Buddy firmware and was first ported to Klipper by Snapmaker.
+it to the electrical cycles of the motors. The method is based on
+Prusa's Buddy firmware.
 
 An electrical cycle of a stepper motor is four full steps. For
 example, with a 1.8 degree motor and a 20 tooth GT2 pulley
-(`rotation_distance: 40`) one cycle is 0.8mm of belt. A motor that
-stalls against a hard stop under the same load stalls at the same
-place within its electrical cycle each time. After X and Y have been
-homed the regular way, precise homing:
+(`rotation_distance: 40`) one cycle is 0.8mm of belt. The hard stops
+do not move relative to the motors, so the corner of the X and Y
+walls is always at the same place within the electrical cycles of
+both motors, even though the point at which a stall is detected
+varies. After X and Y have been homed the regular way, precise
+homing:
 
 1. Parks the toolhead `corexy_precise_homing_offset` mm from both the
    X and the Y wall, and moves both motors onto the start of an
@@ -441,15 +443,15 @@ homed the regular way, precise homing:
    detection of that motor is used: `stepper_y` if X and Y home in the
    same direction, otherwise `stepper_x`. Each wall is probed at least
    twice, until two successive probes agree within a quarter of a
-   cycle, with up to three extra probes per wall.
+   cycle and neither triggered early, with up to three extra probes
+   per wall.
 3. Calculates from the two travel distances where the corner is in
    electrical cycles of each motor, rounds that to a whole number of
    cycles and sets the toolhead position accordingly.
 
-The rounding discards differences in where the stall is detected of
-up to about a quarter of a cycle, so the homed position is expected
-to repeat to about a microstep instead of to the accuracy of the
-stall detection.
+The rounding discards differences of up to about a quarter of a cycle
+in where the stall is detected, so the homed position does not depend
+on them.
 
 The fractional part of the measured number of cycles depends on where
 the hard stops are relative to the motor phases, and is a constant of
@@ -473,15 +475,16 @@ than risk rounding to a different whole number of cycles.
 - No `[endstop_phase stepper_x]` or `[endstop_phase stepper_y]`
   section; Kalico reports a config error if either is present. A
   bare `[endstop_phase]` section may be used for other steppers, but
-  its ENDSTOP_PHASE_CALIBRATE statistics for `stepper_x` and
-  `stepper_y` include the diagonal probes and are not meaningful.
+  its statistics for the probing motor include the diagonal probes,
+  and saving ENDSTOP_PHASE_CALIBRATE results for `stepper_x` or
+  `stepper_y` adds a section that precise homing refuses.
 - Room to probe: the X and Y axes should each be longer than about
   three times `corexy_precise_homing_offset`, and the offset should be
   several electrical cycles (the default of 5mm is about six cycles
   with the 0.8mm example above).
-- A `hold_current` on `stepper_x` and `stepper_y` (if set) that is not
-  lower than the current used for homing. One motor stands still
-  during each probe and has to hold against the other.
+- No `hold_current` on `stepper_x` or `stepper_y` (see the CoreXY
+  tips above): one motor stands still during each probe and has to
+  hold against the other.
 
 #### Setting up precise homing
 
@@ -505,9 +508,8 @@ Run `COREXY_HOMING_CALIBRATE` and `SAVE_CONFIG` again after any
 mechanical change that can move the hard stops relative to the
 motors: belts replaced or retensioned, pulleys or motors changed or
 moved, or the frame or the hard stops themselves changed. Also
-recalibrate after changing `microsteps`, `rotation_distance`, the
-homing direction or `position_endstop` of `stepper_x` or `stepper_y`,
-or `corexy_precise_homing_offset`.
+recalibrate after changing the homing direction of `stepper_x` or
+`stepper_y`.
 
 #### Behavior
 
@@ -515,7 +517,9 @@ or `corexy_precise_homing_offset`.
   single `G28` or by separate `G28 X` and `G28 Y` commands (as
   `[safe_z_home]` and homing_override macros may do). When the same
   `G28` also homes Z, it runs before Z is homed. SET_KINEMATIC_POSITION
-  does not count as homing.
+  does not count as homing, and an axis it marks as homed (by default
+  all of them, even when only `Z` is given) has to be homed again
+  before precise homing runs.
 - After a precise home, homing only X or only Y homes that axis the
   regular way without snapping. That axis is then back to ordinary
   sensorless accuracy until the other axis is homed as well, which
@@ -529,9 +533,9 @@ or `corexy_precise_homing_offset`.
   `homing_retract_speed` of `stepper_x`. No retract or second homing
   move is done after a probe, regardless of `homing_retract_dist` and
   `min_home_dist`.
-- Homing takes several seconds longer: there are at least four
-  probes, and when a `home_current` is set each probe has the
-  `current_change_dwell_time` before and after it.
+- Homing takes longer: there are at least four probes, and when a
+  `home_current` that differs from the run current is set each probe
+  has the `current_change_dwell_time` before and after it.
 - After a successful home the toolhead is left about
   `corexy_precise_homing_offset` mm from both walls, not at the
   position of a regular home.

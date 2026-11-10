@@ -118,6 +118,7 @@ def make_kin(m, moff=(0, 0), origin=(0.0, 0.0)):
                 get_steppers=lambda s=s: [s],
                 get_homing_info=lambda hi=hi: hi,
                 get_range=lambda: (0.0, 200.0),
+                set_position=lambda pos: None,
             )
         )
     kin.tmc = [
@@ -136,7 +137,7 @@ def make_kin(m, moff=(0, 0), origin=(0.0, 0.0)):
     )
     kin.toolhead = m
     kin.precise_homing, kin.precise_offset = True, 5.0
-    kin.precise_origin, kin.precise_axes = origin, set()
+    kin.precise_origin, kin.unsnapped_axes = origin, set()
     kin.limits = [(1.0, -1.0)] * 3
     return kin
 
@@ -277,10 +278,15 @@ def test_home_snaps_only_after_x_and_y():
     m.axes = [1]
     kin.home(m)
     assert len(m.probes) == 8  # G28 X then G28 Y snaps once
+    m.axes = [0]
     kin.home(m)
+    kin.set_position(m.pos, "xyz")  # SET_KINEMATIC_POSITION
+    m.axes = [1]
+    kin.home(m)
+    assert len(m.probes) == 8  # a forced X does not count as homed
     m.axes = [0, 1]
     kin.home(m)  # Y alone, then both: snaps after Y is homed again
-    assert len(m.probes) == 12 and not kin.precise_axes
+    assert len(m.probes) == 12 and not kin.unsnapped_axes
 
 
 @pytest.mark.parametrize(
@@ -311,6 +317,8 @@ def test_calibrate(monkeypatch, errs, error):
     kin.cmd_COREXY_HOMING_CALIBRATE(gcmd)
     # 5 samples at whole-cycle grid offsets, circular mean of the fractions
     assert len(m.probes) == 20
+    held = {p[1] for p in m.probes}
+    assert len(held) > 1 and len({h % PHASES for h in held}) == 1
     frac = true_fraction((9, 30))
     for o, f in zip(kin.precise_origin, frac):
         assert -0.5 < o <= 0.5

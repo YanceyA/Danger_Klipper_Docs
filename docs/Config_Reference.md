@@ -657,10 +657,8 @@ max_z_accel:
 #   The calibrated phase origin of stepper_x and stepper_y, as two
 #   comma separated values in fractions of an electrical cycle. This
 #   is normally set by running COREXY_HOMING_CALIBRATE followed by
-#   SAVE_CONFIG, and should not also be set by hand (a value set
-#   outside of the SAVE_CONFIG block takes precedence over the saved
-#   one). The default is to not be calibrated, in which case the
-#   regular XY home is kept.
+#   SAVE_CONFIG. The default is to not be calibrated, in which case
+#   the regular XY home is kept.
 
 # The stepper_x section is used to describe the X axis as well as the
 # stepper controlling the X+Y movement.

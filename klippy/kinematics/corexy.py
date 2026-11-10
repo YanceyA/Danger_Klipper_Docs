@@ -9,10 +9,10 @@ import math
 from klippy import stepper
 from klippy.extras import endstop_phase, homing
 
-PROBES_PER_WALL = 2  # last wall probes that must not be early and agree
+PROBES_PER_WALL = 2  # agreeing, not early, probes needed per wall
 PROBE_RETRIES = 3  # extra wall probes allowed before giving up
-MAX_PHASE_ERROR = 0.25  # cycles off the grid at which a measurement fails
-WARN_PHASE_ERROR = 0.15  # cycles off the grid that draw a warning
+MAX_PHASE_ERROR = 0.25  # cycles at which probes or a home are rejected
+WARN_PHASE_ERROR = 0.15  # cycles from the origin that draw a warning
 # Whole-cycle AB offsets that COREXY_HOMING_CALIBRATE samples at
 CAL_GRID = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
 
@@ -73,7 +73,7 @@ class CoreXYKinematics:
         self.precise_origin = config.getfloatlist(
             "corexy_precise_homing_origin", None, count=2
         )
-        self.precise_axes = set()
+        self.unsnapped_axes = set()
         if self.precise_homing:
             for rail in self.rails[:2]:
                 if not rail.get_homing_info().use_sensorless_homing:
@@ -124,7 +124,7 @@ class CoreXYKinematics:
             rail.set_position(newpos)
             if "xyz"[i] in homing_axes:
                 self.limits[i] = rail.get_range()
-                self.precise_axes.discard(i)
+                self.unsnapped_axes.discard(i)
 
     def note_z_not_homed(self):
         self.clear_homing_state("z")
@@ -133,11 +133,11 @@ class CoreXYKinematics:
         for axis, axis_name in enumerate("xyz"):
             if axis_name in clear_axes:
                 self.limits[axis] = (1.0, -1.0)
-                self.precise_axes.discard(axis)
+                self.unsnapped_axes.discard(axis)
 
     def home(self, homing_state):
         # Each axis is homed independently and in order
-        self.precise_axes.difference_update(homing_state.get_axes())
+        self.unsnapped_axes.difference_update(homing_state.get_axes())
         for axis in homing_state.get_axes():
             rail = self.rails[axis]
             # Determine movement
@@ -153,9 +153,9 @@ class CoreXYKinematics:
             # Perform homing
             homing_state.home_rails([rail], forcepos, homepos)
             # Snap XY as soon as both X and Y hold a position found by homing
-            self.precise_axes.add(axis)
-            if self.precise_homing and {0, 1} <= self.precise_axes:
-                self.precise_axes.clear()
+            self.unsnapped_axes.add(axis)
+            if self.precise_homing and {0, 1} <= self.unsnapped_axes:
+                self.unsnapped_axes.clear()
                 if self.precise_origin is None:
                     self.printer.lookup_object("gcode").respond_info(
                         "corexy precise homing: not calibrated;"
@@ -189,7 +189,7 @@ class CoreXYKinematics:
         toolhead.manual_move(park, speed)
         toolhead.flush_step_generation()
         steppers = [rail.get_steppers()[0] for rail in self.rails[:2]]
-        cycles, nudge = [], []
+        cycle_mm, nudge = [], []
         for s, tmc, g in zip(steppers, self.tmc, grid):
             moff, phases = tmc.get_phase_offset()
             if moff is None:
@@ -199,7 +199,7 @@ class CoreXYKinematics:
                     )
                 moff = 0
             steps = (-(s.get_mcu_position() + moff)) % phases - g * phases
-            cycles.append(phases * s.get_step_dist())
+            cycle_mm.append(phases * s.get_step_dist())
             nudge.append(steps * s.get_step_dist())
         self._move_ab(*nudge, speed)
         start = toolhead.get_position()
@@ -230,7 +230,7 @@ class CoreXYKinematics:
                 if (
                     len(last) == PROBES_PER_WALL
                     and min(last) > min_dist
-                    and max(last) - min(last) <= MAX_PHASE_ERROR * cycles[m]
+                    and max(last) - min(last) <= MAX_PHASE_ERROR * cycle_mm[m]
                 ):
                     dists.append(sum(last) / PROBES_PER_WALL)
                     break
@@ -241,10 +241,10 @@ class CoreXYKinematics:
                 )
         toolhead.set_position(start)
         dx, dy = dirs[0] * dists[0], dirs[1] * dists[1]
-        c = [0.5 * (dx + dy) / cycles[0], 0.5 * (dx - dy) / cycles[1]]
-        return c, cycles
+        c = [0.5 * (dx + dy) / cycle_mm[0], 0.5 * (dx - dy) / cycle_mm[1]]
+        return c, cycle_mm
 
-    def _snap_home(self, c, cycles):
+    def _snap_home(self, c, cycle_mm):
         rel = [ci - oi for ci, oi in zip(c, self.precise_origin)]
         n = [round(r) for r in rel]
         drift = max(abs(r - ni) for r, ni in zip(rel, n))
@@ -264,7 +264,7 @@ class CoreXYKinematics:
         logging.info(
             "corexy precise homing: cycles A %.3f B %.3f -> %d %d", *c, *n
         )
-        a, b = n[0] * cycles[0], n[1] * cycles[1]
+        a, b = n[0] * cycle_mm[0], n[1] * cycle_mm[1]
         ex, ey = [r.get_homing_info().position_endstop for r in self.rails[:2]]
         pos = self.toolhead.get_position()
         pos[:2] = [ex - 0.5 * (a + b), ey - 0.5 * (a - b)]
@@ -282,13 +282,13 @@ class CoreXYKinematics:
         try:
             for i in range(count):
                 grid = CAL_GRID[i % len(CAL_GRID)]
-                c, cycles = self._measure_cycles(homing_state, grid)
+                c, cycle_mm = self._measure_cycles(homing_state, grid)
                 results.append(c)
                 gcmd.respond_info("cycles A %.3f B %.3f" % tuple(c))
         except self.printer.command_error:
             self.clear_homing_state("xy")
             raise
-        # Circular mean and spread of the fractional cycles
+        # Circular mean and spread of the fractional cycles (0.0 not -0.0)
         origin = []
         for vals in zip(*results):
             angles = [2.0 * math.pi * v for v in vals]
@@ -302,7 +302,7 @@ class CoreXYKinematics:
                 )
             origin.append(o)
         self.precise_origin = origin
-        self._snap_home(c, cycles)
+        self._snap_home(c, cycle_mm)
         value = "%.3f, %.3f" % tuple(origin)
         gcmd.respond_info(
             "printer: corexy_precise_homing_origin: %s\n"
