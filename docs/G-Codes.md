@@ -2113,6 +2113,17 @@ The velocity argument is not available on CoreXY. With no arguments, this
 command responds with the movement direction with the most acceleration or
 velocity.
 
+#### ⚠️ COREXY_HOMING_CALIBRATE
+
+`COREXY_HOMING_CALIBRATE [SAMPLES=<count>]`: Measure the origin used
+by [precise homing on CoreXY](TMC_Drivers.md#precise-homing-on-corexy).
+X and Y must be homed first. By default, 5 SAMPLES are taken. After
+completion, use the SAVE_CONFIG command to store the result in the
+config file.
+
+This command is only available when `corexy_precise_homing` is enabled
+in the [printer config section](Config_Reference.md#corexy-kinematics).
+
 ### ⚠️ [tools_calibrate]
 
 The following commands are available when the

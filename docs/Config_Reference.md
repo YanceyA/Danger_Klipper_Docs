@@ -621,6 +621,9 @@ Only parameters specific to corexy printers are described here - see
 [common kinematic settings](#common-kinematic-settings) for available
 parameters.
 
+See [precise homing on CoreXY](TMC_Drivers.md#precise-homing-on-corexy)
+for information on the `corexy_precise_homing` options.
+
 ```
 [printer]
 kinematics: corexy
@@ -633,6 +636,19 @@ max_z_accel:
 #   This sets the maximum acceleration (in mm/s^2) of movement along
 #   the z axis. It limits the acceleration of the z stepper motor. The
 #   default is to use max_accel for max_z_accel.
+#⚠️ corexy_precise_homing: False
+#   If true, precise homing is done after the sensorless home of X and
+#   Y. The default is False.
+#⚠️ corexy_precise_homing_offset: 5.0
+#   Distance (in mm) from the X and Y endstops at which precise homing
+#   starts its measurement. The toolhead is left about this far from
+#   both endstops after homing. The minimum is 3mm, and the X and Y
+#   axes should each be longer than about three times this distance.
+#   The default is 5mm.
+#⚠️ corexy_precise_homing_origin:
+#   The origin used by precise homing. This is measured by the
+#   COREXY_HOMING_CALIBRATE command; it should not normally be set by
+#   hand.
 
 # The stepper_x section is used to describe the X axis as well as the
 # stepper controlling the X+Y movement.

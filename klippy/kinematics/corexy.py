@@ -3,7 +3,35 @@
 # Copyright (C) 2017-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+import logging
+import math
+
 from klippy import stepper
+from klippy.extras import endstop_phase, homing
+
+PROBES_PER_WALL = 2  # agreeing, not early, probes needed per wall
+PROBE_RETRIES = 3  # extra wall probes allowed before giving up
+MAX_PHASE_ERROR = 0.25  # cycles at which probes or a home are rejected
+WARN_PHASE_ERROR = 0.15  # cycles from the origin that draw a warning
+# Whole-cycle AB offsets that COREXY_HOMING_CALIBRATE samples at
+CAL_GRID = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
+
+
+# A rail as used by the single-motor diagonal probes. The motor turns
+# sqrt(2) times faster than the toolhead moves, the held motor never moves
+# (which a rehome would reject), and a retract after a stall is pointless.
+class DiagonalProbeRail:
+    def __init__(self, rail):
+        self.rail = rail
+
+    def __getattr__(self, name):
+        return getattr(self.rail, name)
+
+    def get_homing_info(self):
+        hi = self.rail.get_homing_info()
+        return hi._replace(
+            speed=hi.speed * math.sqrt(0.5), retract_dist=0.0, min_home_dist=0.0
+        )
 
 
 class CoreXYKinematics:
@@ -35,6 +63,54 @@ class CoreXYKinematics:
         self.axes_min = toolhead.Coord(*[r[0] for r in ranges], e=0.0)
         self.axes_max = toolhead.Coord(*[r[1] for r in ranges], e=0.0)
         self.supports_dual_carriage = False
+        # Setup precise (phase snapped) XY homing
+        self.printer = config.get_printer()
+        self.toolhead = toolhead
+        self.precise_homing = config.getboolean("corexy_precise_homing", False)
+        self.precise_offset = config.getfloat(
+            "corexy_precise_homing_offset", 5.0, minval=3.0
+        )
+        self.precise_origin = config.getfloatlist(
+            "corexy_precise_homing_origin", None, count=2
+        )
+        self.unsnapped_axes = set()
+        if self.precise_homing:
+            for rail in self.rails[:2]:
+                if not rail.get_homing_info().use_sensorless_homing:
+                    raise config.error(
+                        "corexy_precise_homing requires sensorless homing"
+                        " on %s" % (rail.get_name(),)
+                    )
+                if config.has_section("endstop_phase " + rail.get_name()):
+                    raise config.error(
+                        "corexy_precise_homing is incompatible with"
+                        " [endstop_phase %s]" % (rail.get_name(),)
+                    )
+            self.printer.register_event_handler(
+                "klippy:connect", self._handle_connect
+            )
+            self.printer.lookup_object("gcode").register_command(
+                "COREXY_HOMING_CALIBRATE",
+                self.cmd_COREXY_HOMING_CALIBRATE,
+                desc=self.cmd_COREXY_HOMING_CALIBRATE_help,
+            )
+
+    def _handle_connect(self):
+        self.tmc = []
+        for rail in self.rails[:2]:
+            name = rail.get_name()
+            for driver in endstop_phase.TRINAMIC_DRIVERS:
+                module = self.printer.lookup_object(
+                    "%s %s" % (driver, name), None
+                )
+                if module is not None:
+                    self.tmc.append(module)
+                    break
+            else:
+                raise self.printer.config_error(
+                    "corexy_precise_homing requires a TMC driver on %s"
+                    % (name,)
+                )
 
     def get_steppers(self):
         return [s for rail in self.rails for s in rail.get_steppers()]
@@ -48,6 +124,7 @@ class CoreXYKinematics:
             rail.set_position(newpos)
             if "xyz"[i] in homing_axes:
                 self.limits[i] = rail.get_range()
+                self.unsnapped_axes.discard(i)
 
     def note_z_not_homed(self):
         self.clear_homing_state("z")
@@ -56,9 +133,11 @@ class CoreXYKinematics:
         for axis, axis_name in enumerate("xyz"):
             if axis_name in clear_axes:
                 self.limits[axis] = (1.0, -1.0)
+                self.unsnapped_axes.discard(axis)
 
     def home(self, homing_state):
         # Each axis is homed independently and in order
+        self.unsnapped_axes.difference_update(homing_state.get_axes())
         for axis in homing_state.get_axes():
             rail = self.rails[axis]
             # Determine movement
@@ -73,6 +152,165 @@ class CoreXYKinematics:
                 forcepos[axis] += 1.5 * (position_max - hi.position_endstop)
             # Perform homing
             homing_state.home_rails([rail], forcepos, homepos)
+            # Snap XY as soon as both X and Y hold a position found by homing
+            self.unsnapped_axes.add(axis)
+            if self.precise_homing and {0, 1} <= self.unsnapped_axes:
+                self.unsnapped_axes.clear()
+                if self.precise_origin is None:
+                    self.printer.lookup_object("gcode").respond_info(
+                        "corexy precise homing: not calibrated;"
+                        " run COREXY_HOMING_CALIBRATE"
+                    )
+                else:
+                    self._snap_home(*self._measure_cycles(homing_state))
+
+    def _move_ab(self, a, b, speed):
+        x, y = self.toolhead.get_position()[:2]
+        self.toolhead.manual_move([x + 0.5 * (a + b), y + 0.5 * (a - b)], speed)
+        self.toolhead.flush_step_generation()
+
+    # Precise homing: park `offset` mm from both walls and nudge both motors
+    # onto a whole electrical cycle. Then drive one motor alone, so the head
+    # runs on a 45 degree diagonal, into the X wall and then the Y wall,
+    # watching only that motor's stallguard (B when X and Y home the same
+    # way, else A). With motor travels d_x and d_y the corner is at
+    # (sx * d_x / 2, sy * d_y / 2) from the start, ie A = (sx*d_x + sy*d_y) / 2
+    # and B = (sx*d_x - sy*d_y) / 2. Rounding these to whole cycles (around
+    # the calibrated origin) puts the corner on the same motor phases on
+    # every home, regardless of where within a cycle stallguard fired.
+    def _measure_cycles(self, homing_state, grid=(0, 0)):
+        # Returns the corner relative to the start in cycles of [A, B], and
+        # the mm per cycle of [A, B]
+        toolhead = self.toolhead
+        his = [rail.get_homing_info() for rail in self.rails[:2]]
+        dirs = [1.0 if hi.positive_dir else -1.0 for hi in his]
+        offset, speed = self.precise_offset, his[0].retract_speed
+        park = [hi.position_endstop - d * offset for hi, d in zip(his, dirs)]
+        toolhead.manual_move(park, speed)
+        toolhead.flush_step_generation()
+        steppers = [rail.get_steppers()[0] for rail in self.rails[:2]]
+        cycle_mm, nudge = [], []
+        for s, tmc, g in zip(steppers, self.tmc, grid):
+            moff, phases = tmc.get_phase_offset()
+            if moff is None:
+                if self.printer.get_start_args().get("debugoutput") is None:
+                    raise self.printer.command_error(
+                        "Stepper %s phase unknown" % (s.get_name(),)
+                    )
+                moff = 0
+            steps = (-(s.get_mcu_position() + moff)) % phases - g * phases
+            cycle_mm.append(phases * s.get_step_dist())
+            nudge.append(steps * s.get_step_dist())
+        self._move_ab(*nudge, speed)
+        start = toolhead.get_position()
+        m = int(dirs[0] == dirs[1])
+        rail, s = DiagonalProbeRail(self.rails[m]), steppers[m]
+        start_mcu = s.get_mcu_position()
+        dists = []
+        for wall in (0, 1):
+            # Fake frame with the wall at movepos, reached by a pure A or B
+            # vector of 2 * offset per axis (to this wall, from the other).
+            # A trigger before half the expected motor travel is early.
+            vec = [-d * 2.0 * offset for d in dirs]
+            vec[wall] = -vec[wall]
+            forcepos = start[:2] + [None]
+            forcepos[wall] = his[wall].position_endstop - vec[wall]
+            movepos = [forcepos[0] + vec[0], forcepos[1] + vec[1], None]
+            min_dist = abs(his[wall].position_endstop - start[wall])
+            samples = []
+            for _ in range(PROBES_PER_WALL + PROBE_RETRIES):
+                homing_state.home_rails([rail], forcepos, movepos)
+                trig = homing_state.get_trigger_position(s.get_name())
+                # Return to the start by step count; the frame is fake
+                back = [0.0, 0.0]
+                back[m] = (start_mcu - s.get_mcu_position()) * s.get_step_dist()
+                self._move_ab(*back, speed)
+                samples.append(abs(trig - start_mcu) * s.get_step_dist())
+                last = samples[-PROBES_PER_WALL:]
+                if (
+                    len(last) == PROBES_PER_WALL
+                    and min(last) > min_dist
+                    and max(last) - min(last) <= MAX_PHASE_ERROR * cycle_mm[m]
+                ):
+                    dists.append(sum(last) / PROBES_PER_WALL)
+                    break
+            else:
+                raise self.printer.command_error(
+                    "corexy precise homing: inconsistent %s wall probes (%s)"
+                    % ("XY"[wall], ", ".join("%.3f" % d for d in samples))
+                )
+        toolhead.set_position(start)
+        dx, dy = dirs[0] * dists[0], dirs[1] * dists[1]
+        c = [0.5 * (dx + dy) / cycle_mm[0], 0.5 * (dx - dy) / cycle_mm[1]]
+        return c, cycle_mm
+
+    def _snap_home(self, c, cycle_mm):
+        rel = [ci - oi for ci, oi in zip(c, self.precise_origin)]
+        n = [round(r) for r in rel]
+        drift = max(abs(r - ni) for r, ni in zip(rel, n))
+        if drift > MAX_PHASE_ERROR:
+            # Forget the origin, so that the next home can be calibrated from
+            origin, self.precise_origin = self.precise_origin, None
+            raise self.printer.command_error(
+                "corexy precise homing: cycles A %.3f B %.3f do not match"
+                " origin %.3f, %.3f; home again and run COREXY_HOMING_CALIBRATE"
+                % (*c, *origin)
+            )
+        if drift > WARN_PHASE_ERROR:
+            self.printer.lookup_object("gcode").respond_info(
+                "corexy precise homing: phase origin has drifted %.2f cycles;"
+                " consider running COREXY_HOMING_CALIBRATE" % (drift,)
+            )
+        logging.info(
+            "corexy precise homing: cycles A %.3f B %.3f -> %d %d", *c, *n
+        )
+        a, b = n[0] * cycle_mm[0], n[1] * cycle_mm[1]
+        ex, ey = [r.get_homing_info().position_endstop for r in self.rails[:2]]
+        pos = self.toolhead.get_position()
+        pos[:2] = [ex - 0.5 * (a + b), ey - 0.5 * (a - b)]
+        self.toolhead.set_position(pos)
+
+    cmd_COREXY_HOMING_CALIBRATE_help = "Calibrate CoreXY precise homing origin"
+
+    def cmd_COREXY_HOMING_CALIBRATE(self, gcmd):
+        if any(lo > hi for lo, hi in self.limits[:2]):
+            raise gcmd.error("Must home X and Y first")
+        count = gcmd.get_int("SAMPLES", 5, minval=2)
+        homing_state = homing.Homing(self.printer, gcmd)
+        homing_state.set_axes([0, 1])
+        results = []
+        try:
+            for i in range(count):
+                grid = CAL_GRID[i % len(CAL_GRID)]
+                c, cycle_mm = self._measure_cycles(homing_state, grid)
+                results.append(c)
+                gcmd.respond_info("cycles A %.3f B %.3f" % tuple(c))
+        except self.printer.command_error:
+            self.clear_homing_state("xy")
+            raise
+        # Circular mean and spread of the fractional cycles (0.0 not -0.0)
+        origin = []
+        for vals in zip(*results):
+            angles = [2.0 * math.pi * v for v in vals]
+            sin, cos = sum(map(math.sin, angles)), sum(map(math.cos, angles))
+            o = round(math.atan2(sin, cos) / (2.0 * math.pi), 3) + 0.0
+            spread = max(abs((v - o + 0.5) % 1.0 - 0.5) for v in vals)
+            if spread > WARN_PHASE_ERROR:
+                raise gcmd.error(
+                    "corexy precise homing: not repeatable; check sensorless"
+                    " homing tuning"
+                )
+            origin.append(o)
+        self.precise_origin = origin
+        self._snap_home(c, cycle_mm)
+        value = "%.3f, %.3f" % tuple(origin)
+        gcmd.respond_info(
+            "printer: corexy_precise_homing_origin: %s\n"
+            "The SAVE_CONFIG command will update the printer config file\n"
+            "with the above and restart the printer." % (value,)
+        )
+        configfile = self.printer.lookup_object("configfile")
+        configfile.set("printer", "corexy_precise_homing_origin", value)
 
     def _check_endstops(self, move):
         end_pos = move.end_pos

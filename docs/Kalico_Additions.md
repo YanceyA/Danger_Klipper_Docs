@@ -36,6 +36,7 @@
 - [`[tmcXXXX] current_change_dwell_time`](./Config_Reference.md#tmc-stepper-driver-configuration) will add a delay before homing
 - [`[stepper_X] homing_retract_dist, homing_retract_speed`](./Config_Reference.md#stepper) add a short retraction and a second homing for better accuracy
 - [`[stepper_X] min_home_dist`](./Config_Reference.md#stepper) will move away from the endstop before homing
+- [`[printer] corexy_precise_homing`](./Config_Reference.md#corexy-kinematics) adds a [precise homing](./TMC_Drivers.md#precise-homing-on-corexy) step to sensorless homing on CoreXY
 
 ## Probes and Probing
 
