@@ -420,17 +420,19 @@ gcode:
 
 Sensorless homing detects the axis limit a little earlier or later on
 each home. Precise homing is an optional extra step on CoreXY printers
-that is intended to remove this difference. After the regular home of
-X and Y, a single motor moves the toolhead diagonally against the X
-axis limit and then the Y axis limit. The position found is rounded to
-a whole number of motor "electrical cycles" (four full steps, which is
-0.8mm of belt with a 1.8 degree motor and `rotation_distance: 40`)
-from an origin that is calibrated once.
+(`corexy` or `limited_corexy` kinematics) that is intended to remove
+this difference. After the regular home of X and Y, a single motor
+moves the toolhead diagonally against the X axis limit and then the Y
+axis limit. The position found is rounded to a whole number of motor
+"electrical cycles" (four full steps, which is 0.8mm of belt with a
+1.8 degree motor and `rotation_distance: 40`) from an origin that is
+calibrated once. The method is based on Prusa's Buddy firmware.
 
 Precise homing requires TMC drivers and sensorless homing on both
-`stepper_x` and `stepper_y`, tuned as described above. It cannot be
-used with an `[endstop_phase stepper_x]` or
-`[endstop_phase stepper_y]` config section.
+`stepper_x` and `stepper_y`, tuned as described above and with no
+`hold_current` on either. It cannot be used with an
+`[endstop_phase stepper_x]` or `[endstop_phase stepper_y]` config
+section.
 
 To use it, add the following to the config file:
 ```
@@ -446,15 +448,24 @@ before.
 
 Precise homing is done once both X and Y have been homed, by one `G28`
 or by separate `G28 X` and `G28 Y` commands. If only one of them is
-homed again later, that axis is homed as before.
+homed again later, that axis is homed as before. An axis that
+`SET_KINEMATIC_POSITION` marks as homed (by default all of them) has
+to be homed again first.
 
-The home position can shift slightly after each calibration, so check
-any positions that have to be exact (for example, a probe dock).
+The home position can shift slightly (up to about half an electrical
+cycle per motor) after each calibration, so check any positions that
+have to be exact (for example, a probe dock).
 
 Run `COREXY_HOMING_CALIBRATE` and `SAVE_CONFIG` again after a change
-to the belts or their tension, the pulleys, the motors or the frame.
-If a home fails with a message that it does not match the origin, run
-`G28` again and then recalibrate.
+to the belts or their tension, the pulleys, the motors or the frame,
+or to the homing direction of X or Y. If a home fails with a message
+that it does not match the origin, run `G28` again and then
+recalibrate.
+
+If a home or the calibration reports inconsistent probes, no trigger,
+or that it is not repeatable, check the sensorless homing tuning. If
+it reports an unknown stepper phase, check the connection to that TMC
+driver.
 
 ## Querying and diagnosing driver settings
 

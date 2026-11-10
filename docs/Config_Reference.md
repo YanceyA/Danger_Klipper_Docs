@@ -642,7 +642,9 @@ max_z_accel:
 #⚠️ corexy_precise_homing_offset: 5.0
 #   Distance (in mm) from the X and Y endstops at which precise homing
 #   starts its measurement. The toolhead is left about this far from
-#   both endstops after homing. The default is 5mm.
+#   both endstops after homing. The minimum is 3mm, and the X and Y
+#   axes should each be longer than about three times this distance.
+#   The default is 5mm.
 #⚠️ corexy_precise_homing_origin:
 #   The origin used by precise homing. This is measured by the
 #   COREXY_HOMING_CALIBRATE command; it should not normally be set by
