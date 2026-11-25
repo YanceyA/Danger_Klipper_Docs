@@ -998,6 +998,9 @@ class MpcCalibrate:
                 "sensor_responsiveness",
             ]:
                 profile[key] = fit[key]
+            # A fan table from an earlier calibration belongs to the old
+            # model; the fan sweep builds a new one as it measures.
+            profile["fan_ambient_transfer"] = []
             # The measurements below reset the ambient temperature estimate
             # between fan speeds, which only the ambient estimator uses.
             profile["disturbance_estimator"] = ESTIMATOR_AMBIENT

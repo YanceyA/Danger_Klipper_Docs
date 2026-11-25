@@ -516,6 +516,16 @@ def test_fan_sweep_stops_at_the_heater_limit():
     assert coldest_while_holding(sim) > limit - 1.0
 
 
+def test_recalibration_ignores_the_previous_fan_table():
+    def calibrate(**profile):
+        sim = Sim(plant=Plant(), fan=FakeFan())
+        values, _ = sim.calibrate(**profile)
+        return values
+
+    stale = [(0.0, 0.5), (1.0, 0.9)]
+    assert calibrate(fan_ambient_transfer=stale) == calibrate()
+
+
 def test_calibration_without_a_fan():
     sim = Sim(plant=Plant())
     values, _ = sim.calibrate()
