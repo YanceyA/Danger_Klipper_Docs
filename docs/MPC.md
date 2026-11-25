@@ -303,7 +303,9 @@ The calibration does not get stuck when the fan is stronger than the heater:
 > [!NOTE]
 > The heat loss caused by the fan depends on where the air stream goes. If the fan compensation appears to be off while printing, run the calibration with the nozzle a few millimeters above the bed, where the air is deflected in the same way as during a print.
 
-After successful  calibration the method will generate the key model parameters into the log for future reference.  
+## Calibration Results
+
+After successful calibration the method will generate the key model parameters into the log for future reference.  
 
 ![Calibration Parameter Output](img/MPC_calibration_output.png)
 
@@ -319,8 +321,8 @@ A `SAVE_CONFIG` command is then required to commit these calibrated model parame
 #*# DO NOT EDIT THIS BLOCK OR BELOW. The contents are auto-generated.
 #*# [extruder]
 #*# control = mpc
-#*# block_heat_capacity = 22.3110
-#*# sensor_responsiveness = 0.0998635
+#*# block_heat_capacity = 19.8312
+#*# sensor_responsiveness = 0.228104
 #*# ambient_transfer = 0.155082
 #*# fan_ambient_transfer = 0.155082, 0.20156, 0.216441
 ```
