@@ -18,7 +18,7 @@ def test_mpc_fan_sweep_interrupt_restores_fan(dispatch):
     speeds = []
     fan = SimpleNamespace(set_speed=speeds.append)
     original = SimpleNamespace(cooling_fan=fan)
-    control = SimpleNamespace(heater_max_power=50.0)
+    control = SimpleNamespace(heater_max_power=50.0, full_heater_power=50.0)
     mpc = control_mpc.MpcCalibrate(printer, heater, original)
     mpc.wait_stable = lambda gcmd, target_temp: True
 

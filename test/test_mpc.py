@@ -32,6 +32,61 @@ def hot_control(sim, temp=200.0, **overrides):
 
 
 ######################################################################
+# Heater power
+######################################################################
+
+
+def test_heater_power_parsing():
+    parse = control_mpc.parse_heater_power
+    assert parse(["50"]) == [(0.0, 50.0)]
+    assert parse(["300:51", "100:69"]) == [(100.0, 69.0), (300.0, 51.0)]
+    for bad in ([], ["0"], ["100:69", "51"], ["100:69", "100:51"], ["100:-5"]):
+        with pytest.raises(ValueError):
+            parse(bad)
+
+
+def test_heater_power_table_lookup():
+    power_at = control_mpc.heater_power_at
+    assert power_at([(0.0, 50.0)], 250.0) == 50.0
+    table = [(180.0, 72.0), (240.0, 65.0), (300.0, 60.0)]
+    assert power_at(table, 180.0) == 72.0
+    assert power_at(table, 210.0) == pytest.approx(68.5)
+    assert power_at(table, 270.0) == pytest.approx(62.5)
+    # The end segments are extended beyond the listed temperatures...
+    assert power_at(table, 120.0) == pytest.approx(79.0)
+    assert power_at(table, 330.0) == pytest.approx(57.5)
+    # ...but only within limits
+    steep = [(200.0, 60.0), (210.0, 30.0)]
+    assert power_at(steep, 20.0) == 120.0
+    assert power_at(steep, 400.0) == 15.0
+
+
+def test_ptc_heater_duty_follows_block_temperature():
+    sim = Sim()
+    control = hot_control(
+        sim, temp=300.0, heater_power=[(100.0, 69.0), (300.0, 51.0)]
+    )
+    # Far below target: the heater is driven fully on, which is now 51 W
+    control.temperature_update(sim.time + 0.3, 300.0, 350.0)
+    assert control.heater_max_power == pytest.approx(51.0, rel=0.01)
+    assert control.last_power == pytest.approx(control.heater_max_power)
+    assert sim.heater.last_pwm_value == pytest.approx(1.0)
+
+
+def test_calibration_with_ptc_heater():
+    # 60 W at 200C, losing 15% per 100C: the heater is much stronger while
+    # the block is cold than a single power value can express.
+    def calibrate(heater_power):
+        plant = Plant(heater_w=60.0, block_c=20.0, ptc_alpha=0.0015)
+        values, gcmd = Sim(plant=plant).calibrate(heater_power=heater_power)
+        return float(values["block_heat_capacity"])
+
+    table = control_mpc.parse_heater_power(["100:69", "300:51"])
+    assert calibrate(table) == pytest.approx(20.0, rel=0.03)
+    assert abs(calibrate(60.0) - 20.0) > 1.5
+
+
+######################################################################
 # Fan model
 ######################################################################
 
@@ -387,3 +442,15 @@ def test_config_fan_table_formats():
     assert mpc_profile_from_config()["fan_ambient_transfer"] == []
     with pytest.raises(configfile.error, match="fan_ambient_transfer"):
         mpc_profile_from_config(fan_ambient_transfer="0:0.1, 2:0.3")
+
+
+def test_config_heater_power_formats():
+    assert mpc_profile_from_config()["heater_power"] == [(0.0, 50.0)]
+    profile = mpc_profile_from_config(heater_power="180:72, 240:65, 300:60")
+    assert profile["heater_power"] == [
+        (180.0, 72.0),
+        (240.0, 65.0),
+        (300.0, 60.0),
+    ]
+    with pytest.raises(configfile.error, match="heater_power"):
+        mpc_profile_from_config(heater_power="0")

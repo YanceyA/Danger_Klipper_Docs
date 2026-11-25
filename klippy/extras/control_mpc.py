@@ -23,10 +23,70 @@ FAN_SWEEP_MAX_SAG = 8.0
 FAN_SWEEP_MIN_STEP = 0.2
 # and it ends once the heat loss gets this close to the maximum heater power
 FAN_SWEEP_MAX_POWER = 0.95
+# Limits for a heater power table extended beyond its listed temperatures
+HEATER_POWER_MIN_RATIO = 0.5
+HEATER_POWER_MAX_RATIO = 2.0
 
 FILAMENT_TEMP_SRC_AMBIENT = "ambient"
 FILAMENT_TEMP_SRC_FIXED = "fixed"
 FILAMENT_TEMP_SRC_SENSOR = "sensor"
+
+
+def parse_heater_power(entries):
+    """Parse heater_power into a list of (temperature, watts).
+
+    Either a single power, or "temperature:power" pairs for heaters whose
+    power changes with temperature (PTC heaters).
+    """
+    entries = [str(entry).strip() for entry in entries]
+    entries = [entry for entry in entries if entry]
+    if len(entries) == 1 and ":" not in entries[0]:
+        table = [(0.0, float(entries[0]))]
+    else:
+        table = []
+        for entry in entries:
+            temp, sep, power = entry.partition(":")
+            if not sep:
+                raise ValueError(
+                    "expected a single power or temperature:power pairs"
+                )
+            table.append((float(temp), float(power)))
+        table.sort()
+    if not table:
+        raise ValueError("no heater power given")
+    if any(power <= 0.0 for _, power in table):
+        raise ValueError("heater power must be above 0")
+    for idx in range(1, len(table)):
+        if table[idx][0] == table[idx - 1][0]:
+            raise ValueError("duplicate temperature %g" % (table[idx][0],))
+    return table
+
+
+def _heater_power_table(heater_power):
+    if isinstance(heater_power, (int, float)):
+        return [(0.0, float(heater_power))]
+    return heater_power
+
+
+def heater_power_at(table, temp):
+    """Heater power at full duty with the heater block at `temp`"""
+    if len(table) == 1:
+        return table[0][1]
+    # Interpolate; beyond the listed temperatures the nearest segment is
+    # extended, within sane limits.
+    idx = 1
+    while idx < len(table) - 1 and temp > table[idx][0]:
+        idx += 1
+    low_temp, low_power = table[idx - 1]
+    high_temp, high_power = table[idx]
+    power = low_power + (high_power - low_power) * (temp - low_temp) / (
+        high_temp - low_temp
+    )
+    powers = [entry[1] for entry in table]
+    return max(
+        HEATER_POWER_MIN_RATIO * min(powers),
+        min(HEATER_POWER_MAX_RATIO * max(powers), power),
+    )
 
 
 def parse_fan_ambient_transfer(entries):
@@ -87,7 +147,6 @@ class ControlMPC:
         self.profile = profile
         self._load_profile()
         self.heater = heater
-        self.heater_max_power = heater.get_max_power() * self.const_heater_power
 
         self.want_ambient_refresh = self.ambient_sensor is not None
         self.state_block_temp = (
@@ -95,6 +154,7 @@ class ControlMPC:
         )
         self.state_sensor_temp = self.state_block_temp
         self.state_ambient_temp = AMBIENT_TEMP
+        self._update_heater_power()
 
         self.last_power = 0.0
         self.last_loss_ambient = 0.0
@@ -194,7 +254,9 @@ class ControlMPC:
         self.const_block_heat_capacity = self.profile["block_heat_capacity"]
         self.const_ambient_transfer = self.profile["ambient_transfer"]
         self.const_target_reach_time = self.profile["target_reach_time"]
-        self.const_heater_power = self.profile["heater_power"]
+        self.const_heater_power = _heater_power_table(
+            self.profile["heater_power"]
+        )
         self.const_smoothing = self.profile["smoothing"]
         self.const_sensor_responsiveness = self.profile["sensor_responsiveness"]
         self.const_min_ambient_change = self.profile["min_ambient_change"]
@@ -226,6 +288,16 @@ class ControlMPC:
             f"Cannot activate '{name}' as MPC control is not fully configured.\n\n"
             f"Run 'MPC_CALIBRATE' or ensure 'block_heat_capacity', 'sensor_responsiveness', and "
             f"'ambient_transfer' settings are defined for '{name}'."
+        )
+
+    def heater_power(self, temp):
+        return heater_power_at(self.const_heater_power, temp)
+
+    def _update_heater_power(self):
+        # The power of a PTC heater depends on its temperature
+        self.full_heater_power = self.heater_power(self.state_block_temp)
+        self.heater_max_power = (
+            self.heater.get_max_power() * self.full_heater_power
         )
 
     def _update_filament_const(self):
@@ -350,6 +422,8 @@ class ControlMPC:
 
         # Output
 
+        self._update_heater_power()
+
         # Amount of power needed to reach the target temperature in the desired time
 
         heating_power = (
@@ -381,7 +455,7 @@ class ControlMPC:
         else:
             power = 0
 
-        duty = power / self.const_heater_power
+        duty = power / self.full_heater_power
 
         # logging.info(
         #     "mpc: [%.3f/%.3f] %.2f => %.2f / %.2f / %.2f = %.2f[%.2f+%.2f+%.2f] / %.2f, dT %.2f, E %.2f=>%.2f",
@@ -495,13 +569,18 @@ def _simulate_model(
     block_temp = sensor_temp = samples[0][1]
     last_time = samples[0][0]
     error = 0.0
+    power_table = _heater_power_table(heater_power)
+    full_power = power_table[0][1]
+    constant_power = len(power_table) == 1
     for idx in range(1, len(samples)):
         read_time, temp, _ = samples[idx]
         dt = read_time - last_time
         last_time = read_time
+        if not constant_power:
+            full_power = heater_power_at(power_table, block_temp)
         block_temp += (
             (
-                duties[idx] * heater_power
+                duties[idx] * full_power
                 - (block_temp - ambient_temp) * ambient_transfer
             )
             * dt
@@ -586,8 +665,12 @@ def fit_thermal_model(
     duties = _applied_duties(samples, pwm_delay)
     temps = [sample[1] for sample in samples]
     rise = max(temps) - temps[0]
+    # Only for the starting point of the fit; the model uses the full table
+    nominal_power = heater_power_at(
+        _heater_power_table(heater_power), 0.5 * (temps[0] + max(temps))
+    )
     energy = sum(
-        duties[idx] * heater_power * (samples[idx][0] - samples[idx - 1][0])
+        duties[idx] * nominal_power * (samples[idx][0] - samples[idx - 1][0])
         for idx in range(1, len(samples))
     )
     if rise < 10.0 or energy <= 0.0:
@@ -617,7 +700,7 @@ def fit_thermal_model(
     start = [math.log(0.8 * energy / rise), math.log(0.2)]
     if fit_transfer:
         hottest = max(max(temps) - ambient_temp, 10.0)
-        start.append(math.log(heater_power / (4.0 * hottest)))
+        start.append(math.log(nominal_power / (4.0 * hottest)))
     best, error = _nelder_mead(cost, start, 0.3, FIT_MAX_ITERATIONS, tick)
     capacity, responsiveness, transfer = unpack(best)
     if not math.isfinite(error):
@@ -1024,7 +1107,6 @@ class MpcCalibrate:
         settle first. Returns the lost power and the average temperature, or
         None if the temperature fell below min_temp.
         """
-        heater_power = control.const_heater_power
         block_temps = [None, None]  # at the first and the last poll
         last = [None, 0.0]  # time and duty at the previous poll
         totals = [0.0, 0.0, 0.0]  # time, energy, temp*time
@@ -1042,7 +1124,7 @@ class MpcCalibrate:
             else:
                 dt = eventtime - last[0]
                 totals[0] += dt
-                totals[1] += last[1] * heater_power * dt
+                totals[1] += last[1] * control.full_heater_power * dt
                 totals[2] += temp * dt
             last[0], last[1] = eventtime, duty
             return totals[0] < duration

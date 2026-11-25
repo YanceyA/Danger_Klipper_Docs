@@ -37,10 +37,9 @@ filament_heat_capacity: 1.8
 - `heater_power: 50`  
   *Required*   
   The nameplate heater power in watts.  
-  For a PTC, a non-linear heater, MPC may not work optimally due
-  to the change in power output relative to heater temperature for this style of
-  heater. Setting heater_power to the power output at the expected printing
-  temperature is recommended.
+  The power of a PTC heater drops as it heats up. For such a heater give the
+  power at two or more temperatures as `temperature:power` pairs instead, see
+  [PTC Heater Power](#ptc-heater-power).
   
 - `cooling_fan:`  
   _Default Value: Nothing_  
@@ -95,7 +94,19 @@ These can be specified in the config but should not need to be changed from the 
 
 ## PTC Heater Power
 
-The `heater_power:` for PTC style heaters is recommended to be set at the normal print temperature for the printer. Some common PTC heaters are given below for reference. If your heater is not listed the manufacturer should be able to provide a temperature and power curve.
+The power of a PTC style heater decreases as the heater gets hotter. MPC can take this into account when `heater_power` is given as a list of `temperature:power` pairs:
+
+```
+[extruder]
+control: mpc
+heater_power: 180:72, 240:65, 300:60
+```
+
+The power between the listed temperatures is interpolated. Below the lowest and above the highest listed temperature the nearest two points are extended in a straight line, limited to between half the lowest and twice the highest listed power. Two points, one near the lowest and one near the highest printing temperature, are sufficient; more points can be listed if the heater is known to be less linear.
+
+Run `MPC_CALIBRATE` again after changing `heater_power`. With a single power value the calibration has to attribute the extra power a cold PTC heater delivers to a smaller heater block, which shows as a larger model fit error during calibration and as overshoot after heating up.
+
+Some common PTC heaters are given below for reference. If your heater is not listed the manufacturer should be able to provide a temperature and power curve. If only a single value is used, set it to the power at the normal print temperature for the printer.
 
 | Heater Temp (C) | Rapido 2 (W) | Rapido 1 (W) | Dragon Ace old (W) | Dragon Ace new (W) | Revo 40 (W) |Revo 60 (W) |
 |:---------------:|:------------:|:------------:|:------------------:|:------------------:|:-----------:|:----------:|
@@ -106,6 +117,8 @@ The `heater_power:` for PTC style heaters is recommended to be set at the normal
 | 260             | 64           | 48           | 43                 | 55                 | 27          |40          |
 | 280             | 62           | 47           | 41                 | 53                 | 27          |39          |
 | 300             | 60           | 46           | 39                 | 51                 | 26          |38          |
+
+For example, a Rapido 2 would be configured with `heater_power: 180:72, 300:60`.
 
 ## Filament Feed Forward Configuration
 

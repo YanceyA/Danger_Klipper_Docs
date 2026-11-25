@@ -15,6 +15,7 @@ from .control_mpc import (
     FILAMENT_TEMP_SRC_SENSOR,
     ControlMPC,
     parse_fan_ambient_transfer,
+    parse_heater_power,
 )
 
 ######################################################################
@@ -481,9 +482,14 @@ class Heater:
                 temp_profile["smoothing"] = config_section.getfloat(
                     "smoothing", above=0.0, maxval=1.0, default=0.83
                 )
-                temp_profile["heater_power"] = config_section.getfloat(
-                    "heater_power", above=0.0
-                )
+                try:
+                    temp_profile["heater_power"] = parse_heater_power(
+                        config_section.getlist("heater_power")
+                    )
+                except ValueError as e:
+                    raise config_section.error(
+                        f"Unable to parse option 'heater_power' in section '{config_section.get_name()}': {e}"
+                    )
                 temp_profile["sensor_responsiveness"] = config_section.getfloat(
                     "sensor_responsiveness", above=0.0, default=None
                 )

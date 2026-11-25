@@ -1145,6 +1145,8 @@ control:
 #   If control: mpc
 #   See MPC.md for details about these parameters.
 #heater_power:
+#   The heater power in watts, or a list of temperature:power pairs for a
+#   heater whose power changes with temperature (e.g. 180:72, 300:60).
 #cooling_fan:
 #ambient_temp_sensor:
 #filament_diameter: 1.75
