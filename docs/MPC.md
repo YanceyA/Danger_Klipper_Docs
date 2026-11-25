@@ -54,7 +54,7 @@ filament_heat_capacity: 1.8
   This is the filament diameter.  
   
 - `filament_density: 1.20`   
-  _Default Value: 1.20 (g/mm^3)_  
+  _Default Value: 1.20 (g/cm^3)_  
   This is the material density of the filament being printed.
   
 - `filament_heat_capacity: 1.80`  
@@ -73,24 +73,29 @@ These can be specified in the config but should not need to be changed from the 
   _Default Value: 2.0 (sec)_  
  
 - `smoothing:`  
-  _Default Value: 0.83 (sec)_  
-  This parameter affects how quickly the model learns and it represents the ratio of temperature difference applied per second. A value of 1.0 represents no smoothing used in the model.  
+  _Default Value: 0.83_  
+  This parameter affects how quickly the model learns and it represents the ratio of the difference between the measured and the modelled sensor temperature that is applied per second. A value of 1.0 represents no smoothing used in the model.  
   
 - `min_ambient_change:`  
   _Default Value: 1.0 (deg C/s)_  
-  Larger values of MIN_AMBIENT_CHANGE will result in faster convergence but will also cause the simulated ambient temperature to flutter somewhat chaotically around the ideal value.  
+  Larger values of `min_ambient_change` will result in faster convergence but will also cause the simulated ambient temperature to flutter somewhat chaotically around the ideal value.  
   
 - `steady_state_rate:`  
   _Default Value: 0.5 (deg C/s)_  
+  The simulated ambient temperature is only adjusted while the heater output is not at its limit or the modelled block temperature changes slower than this rate.  
+
+- `filament_temperature_source:`  
+  _Default Value: ambient_  
+  The temperature of the filament entering the hotend, used by filament feed forward. Either `ambient` (the simulated ambient temperature), `sensor` (the `ambient_temp_sensor`) or a fixed temperature in deg C. It can be changed at runtime with `MPC_SET ... FILAMENT_TEMP=`.  
   
 - `ambient_temp_sensor: temperature_sensor <sensor_name>`  
   _Default Value: MPC ESTIMATE_  
-  It is recommended not to specify this parameter and let MPC will estimate. This is used for initial state temperature and calibration but not for actual control.
+  It is recommended not to specify this parameter and let MPC estimate the ambient temperature. This is used for initial state temperature and calibration but not for actual control.
   Any temperature sensor could be used, but the sensor should be in proximity to the hotend or measuring the ambient air surrounding the hotend.  
 
 ## PTC Heater Power
 
-The `heater power:` for PTC style heaters is recommended to be set at the normal print temperature for the printer. Some common PTC heaters are given below for reference. If your heater is not listed the manufacturer should be able to provide a temperature and power curve.
+The `heater_power:` for PTC style heaters is recommended to be set at the normal print temperature for the printer. Some common PTC heaters are given below for reference. If your heater is not listed the manufacturer should be able to provide a temperature and power curve.
 
 | Heater Temp (C) | Rapido 2 (W) | Rapido 1 (W) | Dragon Ace old (W) | Dragon Ace new (W) | Revo 40 (W) |Revo 60 (W) |
 |:---------------:|:------------:|:------------:|:------------------:|:------------------:|:-----------:|:----------:|
@@ -104,17 +109,20 @@ The `heater power:` for PTC style heaters is recommended to be set at the normal
 
 ## Filament Feed Forward Configuration
 
-The filament feed forward (FFF) feature allows MPC to look forward and see changes in extrusion rates which could require more or less heat input to maintain target temperature. This feature substantially improves the accuracy and responsiveness of the model during printing. It is enabled by default and can be defined is more detail with the `filament_density` and `filament_heat_capacity` config parameters. The default values are set to cover a wide range of standard materials including ABS, ASA, PLA, PETG. 
+The filament feed forward (FFF) feature allows MPC to look forward and see changes in extrusion rates which could require more or less heat input to maintain target temperature. This feature substantially improves the accuracy and responsiveness of the model during printing. It is enabled by default and can be defined in more detail with the `filament_density` and `filament_heat_capacity` config parameters. The default values are set to cover a wide range of standard materials including ABS, ASA, PLA, PETG. 
 
  FFF parameters can be set, for the printer session, via the `MPC_SET` G-Code command:  
 
-`MPC_SET HEATER=<heater> FILAMENT_DENSITY=<value> FILAMENT_HEAT_CAPACITY=<value> [FILAMENT_TEMP=<sensor|ambient|<value>>]`
+`MPC_SET HEATER=<heater> [FILAMENT_DIAMETER=<value>] [FILAMENT_DENSITY=<value>] [FILAMENT_HEAT_CAPACITY=<value>] [FILAMENT_TEMP=<sensor|ambient|<value>>]`
 
 - `HEATER`:  
   Only extruder is supported
   
+- `FILAMENT_DIAMETER`:  
+  Filament diameter in mm
+  
 - `FILAMENT_DENSITY`:  
-  Filament density in g/mm^3
+  Filament density in g/cm^3
   
 - `FILAMENT_HEAT_CAPACITY`:  
   Filament heat capacity in J/g/K
@@ -184,7 +192,7 @@ The MPC calibration routine must be run for each heater, to be controlled by MPC
   
 - `FAN_BREAKPOINTS=<value>`:  
   _Default Value: 3_  
-  Sets the number off fan setpoint to test during calibration. An arbitrary number of breakpoints can be specified e.g. 7 breakpoints would result in (0, 16%, 33%, 50%, 66%, 83%, 100%) fan speeds.
+  Sets the number of fan setpoints to test during calibration. An arbitrary number of breakpoints can be specified e.g. 7 breakpoints would result in (0, 16%, 33%, 50%, 66%, 83%, 100%) fan speeds.
   It is recommended to use a number that will capture one or more test points below the lowest level of fan normally used. For example, if 20% fan is the lowest commonly used speed, using 11 break points is recommended to test 10% and 20% fan at the low range.  
   
 Default calibration of the hotend with seven fan breakpoints:  
@@ -405,11 +413,11 @@ Every time the MPC algorithm runs it uses the following information to calculate
 
 Once this calculation is done, the simulated sensor temperature is compared to the measured temperature and a fraction of the difference is added to the modelled sensor and heater block temperatures. This drags the simulated system in the direction of the real system. Because only a fraction of the difference is applied, sensor noise is diminished and averages out to zero over time. Both the simulated and the real sensor exhibit the same (or very similar) latency. Consequently, the effects of latency are eliminated when these values are compared to each other. So, the simulated hotend is only minimally affected by sensor noise and latency.   
 
-SMOOTHING is the factor applied to the difference between simulated and measured sensor temperature. At its maximum value of 1, the simulated sensor temperature is continually set equal to the measured sensor temperature. A lower value will result in greater stability in MPC output power but also in decreased responsiveness. A value around 0.25 seems to work quite well.  
+`smoothing` is the factor applied to the difference between simulated and measured sensor temperature. At its maximum value of 1, the simulated sensor temperature is continually set equal to the measured sensor temperature. A lower value will result in greater stability in MPC output power but also in decreased responsiveness. In Kalico the value is expressed per second and scaled to the sensor update interval, so the default of 0.83 applies roughly 0.41 of the difference on each 0.3 second update.  
 
 No simulation is perfect and, anyway, real life ambient temperature changes. So MPC also maintains a best guess estimate of ambient temperature. When the simulated system is close to steady state the simulated ambient temperature is continually adjusted. Steady state is determined to be when the MPC algorithm is not driving the hotend at its limits (i.e., full or zero heater power) or when it is at its limit but temperatures are still not changing very much - which will occur at asymptotic temperature (usually when target temperature is zero and the hotend is at ambient).  
 
-Steady_state_rate is used to recognize the asymptotic condition. Whenever the simulated hotend temperature changes at an absolute rate less than steady_state_rate between two successive runs of the algorithm, the steady state logic is applied. Since the algorithm runs frequently, even a small amount of noise can result in a fairly high instantaneous rate of change of hotend temperature. In practice 1°C/s seems to work well for steady_state_rate.  
+`steady_state_rate` is used to recognize the asymptotic condition. Whenever the simulated hotend temperature changes at an absolute rate less than steady_state_rate between two successive runs of the algorithm, the steady state logic is applied. Since the algorithm runs frequently, even a small amount of noise can result in a fairly high instantaneous rate of change of hotend temperature. The default is 0.5°C/s.  
 
 When in steady state, the difference between real and simulated sensor temperatures is used to drive the changes to ambient temperature. However, when the temperatures are really close min_ambient_change ensures that the simulated ambient temperature converges relatively quickly. Larger values of min_ambient_change will result in faster convergence but will also cause the simulated ambient temperature to flutter somewhat chaotically around the ideal value. This is not a problem because the effect of ambient temperature is fairly small and short-term variations of even 10°C or more will not have a noticeable effect.  
 
@@ -419,7 +427,7 @@ Finally, armed with a new set of temperatures, the MPC algorithm calculates how 
 
 ## Additional Details
 
-Please refer to that the excellent Marlin MPC Documentation for information on the model derivations, tuning methods, and heat transfer coefficients used in this feature.   
+Please refer to the excellent Marlin MPC Documentation for information on the model derivations, tuning methods, and heat transfer coefficients used in this feature.   
 
 # Acknowledgements
 

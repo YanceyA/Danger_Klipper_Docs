@@ -3780,7 +3780,7 @@ max_temp: 325
 
 ### MPC Block Sensor
 
-Virtual MPC sensor to show the internal ambient temperature value (defaults to 25 if any other algorithm than MPC is used)
+Virtual MPC sensor to show the internal modelled heater block temperature value (reports the measured heater temperature if any other algorithm than MPC is used)
 
 ```
 sensor_type: mpc_block_temperature
