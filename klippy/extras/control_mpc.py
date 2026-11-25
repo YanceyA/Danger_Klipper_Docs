@@ -23,6 +23,13 @@ FAN_SWEEP_MAX_SAG = 8.0
 FAN_SWEEP_MIN_STEP = 0.2
 # and it ends once the heat loss gets this close to the maximum heater power
 FAN_SWEEP_MAX_POWER = 0.95
+# MPC_CALIBRATE_FILAMENT extrudes in short moves and keeps this much queued
+FILAMENT_FEED_MOVE_TIME = 0.5
+FILAMENT_FEED_QUEUE_TIME = 1.0
+# and repeats the measurement with the improved value while the result
+# still changes by more than this fraction.
+FILAMENT_CONVERGED = 0.07
+FILAMENT_MAX_ROUNDS = 3
 # Limits for a heater power table extended beyond its listed temperatures
 HEATER_POWER_MIN_RATIO = 0.5
 HEATER_POWER_MAX_RATIO = 2.0
@@ -259,6 +266,13 @@ class ControlMPC:
             self.cmd_MPC_SET,
             desc=self.cmd_MPC_SET_help,
         )
+        gcode.register_mux_command(
+            "MPC_CALIBRATE_FILAMENT",
+            "HEATER",
+            heater.get_name(),
+            self.cmd_MPC_CALIBRATE_FILAMENT,
+            desc=self.cmd_MPC_CALIBRATE_FILAMENT_help,
+        )
 
     cmd_MPC_SET_help = "Set MPC parameter"
 
@@ -338,6 +352,14 @@ class ControlMPC:
 
     def cmd_MPC_CALIBRATE(self, gcmd):
         cal = MpcCalibrate(self.printer, self.heater, self)
+        cal.run(gcmd)
+
+    cmd_MPC_CALIBRATE_FILAMENT_help = (
+        "Measure the heat capacity of the loaded filament"
+    )
+
+    def cmd_MPC_CALIBRATE_FILAMENT(self, gcmd):
+        cal = MpcFilamentCalibrate(self.printer, self.heater, self)
         cal.run(gcmd)
 
     # Helpers
@@ -1306,14 +1328,15 @@ class MpcCalibrate:
             "fan_ambient_transfer": table if fan is not None else [],
         }
 
-    def measure_loss(self, gcmd, control, duration, min_temp=None):
+    def measure_loss(self, gcmd, control, duration, min_temp=None, poll=None):
         """
         Measure the heat lost by the block over `duration` seconds as the
         energy put in by the heater minus the energy that went into changing
         the (modelled) block temperature. Unlike averaging the power at a
         perfectly steady temperature this does not need the temperature to
         settle first. Returns the lost power and the average temperature, or
-        None if the temperature fell below min_temp.
+        None if the temperature fell below min_temp. poll(eventtime) is
+        called on every sample.
         """
         block_temps = [None, None]  # at the first and the last poll
         last = [None, 0.0]  # time and duty at the previous poll
@@ -1321,6 +1344,8 @@ class MpcCalibrate:
         too_cold = [False]
 
         def process(eventtime):
+            if poll is not None:
+                poll(eventtime)
             temp, _ = self.heater.get_temp(eventtime)
             if min_temp is not None and temp < min_temp:
                 too_cold[0] = True
@@ -1345,6 +1370,241 @@ class MpcCalibrate:
             block_temps[1] - block_temps[0]
         )
         return (totals[1] - stored) / elapsed, totals[2] / elapsed
+
+
+class MpcFilamentCalibrate:
+    """
+    Measure how much heater power the filament takes at known flow rates.
+    This gives the heat needed to bring the loaded filament to the nozzle
+    temperature without relying on a data sheet.
+    """
+
+    def __init__(self, printer, heater, control):
+        self.printer = printer
+        self.heater = heater
+        self.control = control
+        self.measure = MpcCalibrate(printer, heater, control)
+
+    def run(self, gcmd):
+        control = self.control
+        control.check_valid()
+        flow_rates = self.get_flow_rates(gcmd)
+        settle_time = gcmd.get_float("SETTLE_TIME", 8.0, minval=0.0)
+        measure_time = gcmd.get_float("MEASURE_TIME", 20.0, minval=2.0)
+        filament_temp = gcmd.get_float("FILAMENT_TEMP", None)
+
+        toolhead = self.printer.lookup_object("toolhead")
+        extruder = toolhead.get_extruder()
+        if (
+            not hasattr(extruder, "find_past_position")
+            or extruder.get_heater() is not self.heater
+        ):
+            raise gcmd.error(
+                f"'{self.heater.get_name()}' is not the heater of the"
+                " active extruder"
+            )
+        reactor = self.heater.reactor
+        _, target_temp = self.heater.get_temp(reactor.monotonic())
+        if not target_temp:
+            raise gcmd.error(
+                "Heat the extruder to the printing temperature of the"
+                " filament first"
+            )
+        radius = control.const_filament_diameter / 2.0
+        cross_section = radius * radius * math.pi  # mm^2
+        speeds = [flow / cross_section for flow in flow_rates]
+        max_velocity = getattr(extruder, "max_e_velocity", None)
+        if max_velocity is not None and max(speeds) > max_velocity:
+            raise gcmd.error(
+                f"{max(flow_rates):.1f} mm^3/s exceeds the extruder's"
+                " max_extrude_only_velocity"
+            )
+
+        if filament_temp is None:
+            ambient_temp = AMBIENT_TEMP
+            if control.ambient_sensor is not None:
+                ambient_temp = control.ambient_sensor.get_temp(
+                    reactor.monotonic()
+                )[0]
+            # The temperature the filament enters the hotend with; not the
+            # simulated ambient temperature, which also absorbs model errors.
+            filament_temp = control.filament_temp(
+                reactor.monotonic(), ambient_temp
+            )
+
+        # g of filament per mm of filament
+        mass = cross_section / 1000.0 * control.const_filament_density
+
+        def evaluate(results):
+            # Least squares over all flow rates; higher flow rates take
+            # more power and therefore count for more.
+            weighted = total = 0.0
+            lines = []
+            for speed, power, temp in results:
+                # W per J/g/K of filament heat capacity at this flow rate
+                scale = speed * (temp - filament_temp) * mass
+                weighted += power * scale
+                total += scale * scale
+                lines.append(
+                    f"  {speed * cross_section:.1f} mm^3/s: {power:.2f} W,"
+                    f" {power / scale:.3f} J/g/K"
+                )
+            return weighted / total, lines
+
+        with self.heater.calibration():
+            session = FilamentFlowTest(
+                self, gcmd, toolhead, extruder, target_temp
+            )
+            session.start(measure_time)
+            for attempt in range(FILAMENT_MAX_ROUNDS):
+                results = session.measure(speeds, settle_time, measure_time)
+                heat_capacity, lines = evaluate(results)
+                if heat_capacity <= 0.0:
+                    raise gcmd.error(
+                        "The filament did not take any measurable heater"
+                        " power. Is filament loaded and being extruded?"
+                    )
+                previous = control.const_filament_heat_capacity
+                control.const_filament_heat_capacity = heat_capacity
+                control._update_filament_const()
+                # While the controller compensates for the wrong amount of
+                # filament heating the block temperature moves around, which
+                # disturbs the measurement. Repeat with the improved value
+                # until it no longer changes much.
+                if abs(heat_capacity - previous) <= (
+                    FILAMENT_CONVERGED * heat_capacity
+                ):
+                    break
+                if attempt + 1 < FILAMENT_MAX_ROUNDS:
+                    gcmd.respond_info(
+                        f"Filament heat capacity {heat_capacity:.3f} J/g/K"
+                        f" (was {previous:.3f}), measuring again"
+                    )
+
+        name = self.heater.get_name()
+        density = control.const_filament_density
+        gcmd.respond_info(
+            f"Finished MPC filament calibration of heater '{name}'\n"
+            "Measured:\n" + "\n".join(lines) + "\n"
+            f"filament_heat_capacity={heat_capacity:.3f} [J/g/K]"
+            f" at filament_density={density:.3f} [g/cm^3]\n"
+            "The value is used until the next restart. To use it for this"
+            " filament again:\n"
+            f"MPC_SET HEATER={name} FILAMENT_DENSITY={density:.3f}"
+            f" FILAMENT_HEAT_CAPACITY={heat_capacity:.3f}"
+        )
+
+    def get_flow_rates(self, gcmd):
+        try:
+            flow_rates = sorted(
+                float(flow)
+                for flow in gcmd.get("FLOW_RATES", "5,10").split(",")
+            )
+        except ValueError:
+            raise gcmd.error(
+                "Unable to parse FLOW_RATES, it must be a comma-separated"
+                " list of flow rates in mm^3/s ('5,10')"
+            )
+        if not flow_rates or flow_rates[0] <= 0.0:
+            raise gcmd.error("FLOW_RATES must be above 0")
+        return flow_rates
+
+
+class FilamentFlowTest:
+    """Extrudes at given speeds while measuring the heater power"""
+
+    def __init__(self, calibrate, gcmd, toolhead, extruder, target_temp):
+        self.measure_loss = calibrate.measure.measure_loss
+        self.wait_stable = calibrate.measure.wait_stable
+        self.control = calibrate.control
+        self.reactor = calibrate.heater.reactor
+        self.gcmd = gcmd
+        self.toolhead = toolhead
+        self.extruder = extruder
+        self.target_temp = target_temp
+        self.speed = 0.0
+        self.idle_power = None
+        self.idle_state = None
+
+    def print_time(self, eventtime):
+        return self.toolhead.get_status(eventtime)["estimated_print_time"]
+
+    def feed(self, eventtime):
+        # Keep about a second of extrusion queued. Short moves keep the test
+        # responsive to an interruption and never fill the look-ahead
+        # buffer, which would stall this command.
+        queued = self.toolhead.get_last_move_time() - self.print_time(eventtime)
+        if self.speed and queued < FILAMENT_FEED_QUEUE_TIME:
+            length = min(
+                self.speed * FILAMENT_FEED_MOVE_TIME, self.extruder.max_e_dist
+            )
+            self.gcmd.run_script(f"G1 E{length:.5f} F{self.speed * 60.0:.3f}")
+
+    def measure_idle(self, measure_time):
+        power, _ = self.measure_loss(self.gcmd, self.control, measure_time)
+        self.gcmd.respond_info(f"Without extruding: {power:.2f} W")
+        return power
+
+    def start(self, measure_time):
+        self.gcmd.respond_info("Waiting for temperature to stabilize")
+        self.wait_stable(self.gcmd, self.target_temp)
+        control = self.control
+        self.idle_state = (
+            control.state_ambient_temp,
+            control.state_disturbance,
+        )
+        self.idle_power = self.measure_idle(measure_time)
+
+    def measure(self, speeds, settle_time, measure_time):
+        """Returns (filament speed, filament power, temperature) per speed"""
+        gcmd = self.gcmd
+        control = self.control
+        reactor = self.reactor
+        min_temp = self.target_temp - FAN_SWEEP_MAX_SAG
+        results = []
+        gcmd.run_script("SAVE_GCODE_STATE NAME=_MPC_CALIBRATE_FILAMENT\nM83")
+        try:
+            for speed in speeds:
+                self.speed = speed
+                settled = reactor.monotonic() + settle_time
+
+                def settling(eventtime):
+                    self.feed(eventtime)
+                    return eventtime < settled
+
+                gcmd.wait_while(settling, True, 0.25)
+                start = self.print_time(reactor.monotonic())
+                loss = self.measure_loss(
+                    gcmd, control, measure_time, min_temp, self.feed
+                )
+                end = self.print_time(reactor.monotonic())
+                if loss is None:
+                    raise gcmd.error(
+                        "The heater cannot keep up with this flow rate;"
+                        " use lower FLOW_RATES"
+                    )
+                power, temp = loss
+                # The filament speed that was really achieved
+                moved = self.extruder.find_past_position(
+                    end
+                ) - self.extruder.find_past_position(start)
+                results.append((moved / (end - start), power, temp))
+        finally:
+            self.speed = 0.0
+            gcmd.run_script("RESTORE_GCODE_STATE NAME=_MPC_CALIBRATE_FILAMENT")
+        self.toolhead.wait_moves()
+        # Whatever the controller learned to make up for the filament does
+        # not apply without extruding.
+        control.state_ambient_temp, control.state_disturbance = self.idle_state
+        gcmd.sleep(settle_time)
+        # The power needed without extruding drifts a little as the hotend
+        # soaks: use the average of before and after.
+        before = self.idle_power
+        self.idle_power = self.measure_idle(measure_time)
+        base_power = 0.5 * (before + self.idle_power)
+        return [
+            (speed, power - base_power, temp) for speed, power, temp in results
+        ]
 
 
 class TuningControl:

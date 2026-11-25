@@ -102,6 +102,7 @@ class FakeExtruder:
         self.sim = sim
         self.heater = heater
         self.max_e_dist = 50.0
+        self.max_e_velocity = 120.0
 
     def get_heater(self):
         return self.heater
@@ -111,11 +112,27 @@ class FakeExtruder:
 
 
 class FakeToolhead:
-    def __init__(self, extruder):
+    def __init__(self, sim, extruder):
+        self.sim = sim
         self.extruder = extruder
+        self.print_time = 0.0
 
     def get_extruder(self):
         return self.extruder
+
+    def get_last_move_time(self):
+        self.print_time = max(self.print_time, self.sim.time + 0.25)
+        return self.print_time
+
+    def get_status(self, eventtime):
+        return {
+            "print_time": self.print_time,
+            "estimated_print_time": self.sim.time,
+        }
+
+    def wait_moves(self):
+        if self.print_time > self.sim.time:
+            self.sim.advance(self.print_time - self.sim.time)
 
 
 class FakeGCode:
@@ -272,6 +289,14 @@ class FakeGCmd:
     def sleep(self, duration, error_on_cancel=True):
         self.sim.advance(duration)
 
+    def run_script(self, script):
+        for line in script.split("\n"):
+            self.sim.scripts.append(line)
+            words = line.split()
+            if words and words[0] == "G1":
+                params = {word[0]: float(word[1:]) for word in words[1:]}
+                self.sim.extrude(params["E"], params["F"] / 60.0)
+
     def wait_while(self, condition_cb, error_on_cancel=True, interval=1.0):
         start = self.sim.time
         while condition_cb(self.sim.time):
@@ -294,10 +319,11 @@ class Sim:
         self.next_sample = self.time + REPORT_TIME
         self.positions = [0.0]
         self.position_start = self.time
+        self.extrusions = []  # (start, end, speed) of queued G1 moves
+        self.scripts = []
         self.log = []  # (time, sensor, block, applied duty)
-        self.printer.objects["toolhead"] = FakeToolhead(
-            FakeExtruder(self, self.heater)
-        )
+        self.toolhead = FakeToolhead(self, FakeExtruder(self, self.heater))
+        self.printer.objects["toolhead"] = self.toolhead
 
     def profile(self, **overrides):
         profile = {
@@ -335,7 +361,26 @@ class Sim:
         self.heater.control = control
         return control
 
+    def extrude(self, length, speed):
+        """Queue an extrude-only move behind the moves already queued"""
+        start = self.toolhead.get_last_move_time()
+        end = start + length / speed
+        self.extrusions.append((start, end, speed))
+        self.toolhead.print_time = end
+
+    def total_flow(self, t):
+        return self.flow(t) + sum(
+            speed for start, end, speed in self.extrusions if start <= t < end
+        )
+
     def extruder_position(self, print_time):
+        return self.flow_position(print_time) + sum(
+            speed * (min(end, print_time) - start)
+            for start, end, speed in self.extrusions
+            if start < print_time
+        )
+
+    def flow_position(self, print_time):
         if print_time <= self.position_start:
             return 0.0
         index = (print_time - self.position_start) / SIM_DT
@@ -352,7 +397,7 @@ class Sim:
             while self.pwm_queue and self.pwm_queue[0][0] <= self.time + 1e-9:
                 self.duty = self.pwm_queue.pop(0)[1]
             fan = self.fan.value * self.fan.max_power if self.fan else 0.0
-            self.plant.step(SIM_DT, self.duty, fan, self.flow(self.time))
+            self.plant.step(SIM_DT, self.duty, fan, self.total_flow(self.time))
             self.time += SIM_DT
             if self.time >= self.next_sample - 1e-9:
                 self.heater.temperature_callback(

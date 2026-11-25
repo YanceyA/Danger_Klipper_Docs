@@ -157,9 +157,61 @@ For example, updating the filament material properties for ASA would be:
 MPC_SET HEATER=extruder FILAMENT_DENSITY=1.07 FILAMENT_HEAT_CAPACITY=1.7  
 ```
 
+## Measuring The Filament Heat Capacity
+
+The specific heat of a filament is rarely published, varies between blends of the same polymer and changes with temperature, which is why the tables below can only give ranges. The value MPC needs can be measured on the printer instead:
+
+`MPC_CALIBRATE_FILAMENT HEATER=<heater> [FLOW_RATES=<list>] [MEASURE_TIME=<seconds>] [SETTLE_TIME=<seconds>] [FILAMENT_TEMP=<temperature>]`
+
+- `HEATER=<heater>`:  
+  The heater of the active extruder.  
+
+- `FLOW_RATES=<list>`:  
+  _Default Value: 5,10 (mm^3/s)_  
+  The flow rates to extrude at. Use flow rates that the hotend melts comfortably at the chosen temperature.  
+
+- `MEASURE_TIME=<seconds>`:  
+  _Default Value: 20_  
+  The time over which the heater power is measured at each flow rate. A longer time gives a more repeatable result and uses more filament.  
+
+- `SETTLE_TIME=<seconds>`:  
+  _Default Value: 8_  
+  The time to extrude at a flow rate before the measurement starts.  
+
+- `FILAMENT_TEMP=<temperature>`:  
+  _Default Value: the `ambient_temp_sensor` if configured, 25 otherwise, or the fixed `filament_temperature_source`_  
+  The temperature of the filament entering the hotend, e.g. when it is fed from a dryer or through a heated chamber.  
+
+To run the measurement:
+
+1. Set `filament_diameter` and `filament_density` (or `MPC_SET ... FILAMENT_DENSITY=`) for the loaded filament. The density does not have to be exact: an error in the density is compensated by the measured heat capacity.
+2. Move the nozzle to where filament can be extruded freely and heat the extruder to the printing temperature of the filament.
+3. Run `MPC_CALIBRATE_FILAMENT HEATER=extruder`.
+
+The routine measures the heater power needed to hold the temperature without extruding, then while extruding at each flow rate, and once more without extruding. The additional power divided by the amount of filament and the temperature rise is the heat capacity. Because the controller compensating for a wrong amount of filament heating disturbs the measurement, the measurement is repeated with the improved value, up to three times, until the result changes by less than 7%.
+
+A measurement takes two to five minutes and 150 to 450mm of 1.75mm filament with the default settings. The result is reported together with the `MPC_SET` command that restores it and is used until the next restart:
+
+```
+Finished MPC filament calibration of heater 'extruder'
+Measured:
+  5.0 mm^3/s: 2.21 W, 1.890 J/g/K
+  10.0 mm^3/s: 4.35 W, 1.858 J/g/K
+filament_heat_capacity=1.865 [J/g/K] at filament_density=1.250 [g/cm^3]
+The value is used until the next restart. To use it for this filament again:
+MPC_SET HEATER=extruder FILAMENT_DENSITY=1.250 FILAMENT_HEAT_CAPACITY=1.865
+```
+
+Store the values per filament, e.g. in the filament table of the [macro below](#setting-fff-parameters-from-the-slicer) or in the filament start G-code of the slicer.
+
+> [!NOTE]
+> The measured value is the effective heat taken up by the filament in this hotend. It includes any error in `heater_power`, and a hotend that does not fully heat the filament at a high flow rate gives a lower value at that flow rate. Values that drop noticeably from one flow rate to the next mean the higher flow rate is beyond what the hotend melts well.
+>
+> In simulation the result is within about 10% of the true value with the default settings, and within about 5% with `disturbance_estimator: power` or `MEASURE_TIME=30`.
+
 ## Filament Physical Properties
 
-MPC works best knowing how much energy (in Joules) it takes to heat 1mm of filament by 1°C. The material values from the tables below have been curated from popular filament manufacturers and material data references. These values are sufficient for MPC to implement the FFF feature.  Advanced users could tune the `filament_density` and `filament_heat_capacity` parameters based on manufacturers datasheets. 
+MPC works best knowing how much energy (in Joules) it takes to heat 1mm of filament by 1°C. The material values from the tables below have been curated from popular filament manufacturers and material data references. These values are sufficient for MPC to implement the FFF feature and are good starting points for [measuring the heat capacity](#measuring-the-filament-heat-capacity) of a specific filament. 
 
 ### Common Materials
 

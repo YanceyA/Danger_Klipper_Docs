@@ -524,6 +524,123 @@ def test_calibration_without_a_fan():
 
 
 ######################################################################
+# Filament calibration
+######################################################################
+
+# J/g/K that corresponds to the simulated filament (0.0054 J/mm/K) for
+# 1.75 mm filament with a density of 1.2 g/cm^3
+PLANT_FILAMENT_CAPACITY = 0.0054 / (math.pi * 0.875**2 / 1000.0 * 1.2)
+
+
+def filament_calibration(params=None, plant=None, target=220.0, **profile):
+    sim = Sim(plant=plant or Plant())
+    control = sim.make_control(
+        **{**CALIBRATED, "filament_heat_capacity": 1.2, **profile}
+    )
+    sim.heater.set_temp(target)
+    sim.advance(120.0)
+    gcmd = FakeGCmd(sim, params)
+    control_mpc.MpcFilamentCalibrate(sim.printer, sim.heater, control).run(gcmd)
+    return sim, control, gcmd
+
+
+def test_filament_calibration_measures_heat_capacity():
+    # Start from the value of the simulated filament: one round is enough
+    sim, control, gcmd = filament_calibration(
+        filament_heat_capacity=PLANT_FILAMENT_CAPACITY
+    )
+    assert control.const_filament_heat_capacity == pytest.approx(
+        PLANT_FILAMENT_CAPACITY, rel=0.1
+    )
+    assert "FILAMENT_HEAT_CAPACITY=" in gcmd.responses[-1]
+    assert not any("measuring again" in msg for msg in gcmd.responses)
+    # The G-code state is restored and the heater keeps its target
+    assert sim.scripts[0] == "SAVE_GCODE_STATE NAME=_MPC_CALIBRATE_FILAMENT"
+    assert sim.scripts[1] == "M83"
+    assert sim.scripts[-1] == "RESTORE_GCODE_STATE NAME=_MPC_CALIBRATE_FILAMENT"
+    assert sim.heater.target_temp == 220.0
+    # 5 and 10 mm^3/s for 28 seconds each
+    extruded = sum(
+        (end - start) * speed for start, end, speed in sim.extrusions
+    )
+    assert extruded * math.pi * 0.875**2 == pytest.approx(420.0, rel=0.1)
+
+
+@pytest.mark.parametrize("start", [1.0, 2.8])
+def test_filament_calibration_converges_from_a_wrong_value(start):
+    # A controller that compensates for the wrong amount of filament heat
+    # disturbs the measurement, so it is repeated with the improved value.
+    _, control, gcmd = filament_calibration(filament_heat_capacity=start)
+    assert any("measuring again" in msg for msg in gcmd.responses)
+    assert control.const_filament_heat_capacity == pytest.approx(
+        PLANT_FILAMENT_CAPACITY, rel=0.1
+    )
+    # The feed forward uses the measured value from now on
+    assert control.const_filament_cross_section_heat_capacity == pytest.approx(
+        0.0054, rel=0.1
+    )
+
+
+@pytest.mark.parametrize("estimator", ["ambient", "power"])
+def test_filament_calibration_follows_the_filament(estimator):
+    plant = Plant(filament_k=0.0075)
+    _, control, _ = filament_calibration(
+        plant=plant, disturbance_estimator=estimator
+    )
+    assert control.const_filament_cross_section_heat_capacity == pytest.approx(
+        0.0075, rel=0.1
+    )
+
+
+def test_filament_calibration_uses_the_real_inlet_temperature():
+    # The simulated ambient temperature absorbs model errors and must not
+    # be mistaken for the temperature of the filament.
+    sim = Sim()
+    control = sim.make_control(**CALIBRATED)
+    sim.heater.set_temp(220.0)
+    sim.advance(120.0)
+    control.state_ambient_temp = -60.0
+    gcmd = FakeGCmd(sim)
+    control_mpc.MpcFilamentCalibrate(sim.printer, sim.heater, control).run(gcmd)
+    assert control.const_filament_heat_capacity == pytest.approx(
+        PLANT_FILAMENT_CAPACITY, rel=0.1
+    )
+
+    # A dryer or heated chamber feeding 60C filament: less heat per mm
+    _, control, _ = filament_calibration(
+        {"FILAMENT_TEMP": "60"}, plant=Plant(ambient=60.0, h0=0.12)
+    )
+    assert control.const_filament_cross_section_heat_capacity == pytest.approx(
+        0.0054, rel=0.1
+    )
+
+
+def test_filament_calibration_rejects_unusable_setups():
+    with pytest.raises(SimError, match="Heat the extruder"):
+        filament_calibration(target=0.0)
+    with pytest.raises(SimError, match="max_extrude_only_velocity"):
+        filament_calibration({"FLOW_RATES": "5,400"})
+    with pytest.raises(SimError, match="FLOW_RATES"):
+        filament_calibration({"FLOW_RATES": "fast"})
+
+    sim = Sim()
+    control = sim.make_control(**CALIBRATED)
+    sim.heater.set_temp(220.0)
+    sim.toolhead.extruder.heater = object()
+    calibrate = control_mpc.MpcFilamentCalibrate(
+        sim.printer, sim.heater, control
+    )
+    with pytest.raises(SimError, match="active extruder"):
+        calibrate.run(FakeGCmd(sim))
+
+
+def test_filament_calibration_stops_when_the_heater_cannot_keep_up():
+    # 150 mm^3/s takes far more than this 50 W heater has left
+    with pytest.raises(SimError, match="cannot keep up"):
+        filament_calibration({"FLOW_RATES": "150"})
+
+
+######################################################################
 # Configuration
 ######################################################################
 

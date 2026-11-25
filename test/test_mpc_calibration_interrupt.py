@@ -44,3 +44,25 @@ def test_mpc_fan_sweep_interrupt_restores_fan(dispatch):
 
     commands.run_in_reactor(reactor, action)
     assert speeds == [0.0, 1.0, 0.0]
+
+
+def test_filament_feed_runs_scripts_while_waiting(dispatch):
+    """MPC_CALIBRATE_FILAMENT queues extrusion from inside its wait loops."""
+    gcode, reactor, printer, _ = dispatch
+    extruded = []
+    gcode.register_command(
+        "G1", lambda gcmd: extruded.append(gcmd.get_float("E"))
+    )
+    polls = []
+
+    def calibrate(gcmd):
+        def feed(eventtime):
+            polls.append(eventtime)
+            gcmd.run_script("G1 E%.3f F300" % (0.5 * len(polls),))
+            return len(polls) < 3
+
+        gcmd.wait_while(feed, True, 0.001)
+
+    gcode.register_command("MPC_FEED_TEST", calibrate)
+    commands.run_in_reactor(reactor, lambda: gcode.run_script("MPC_FEED_TEST"))
+    assert extruded == [0.5, 1.0, 1.5]
