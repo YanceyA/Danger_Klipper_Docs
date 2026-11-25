@@ -698,7 +698,7 @@ def test_config_disturbance_estimator():
 
 
 def test_config_heater_power_formats():
-    assert mpc_profile_from_config()["heater_power"] == [(0.0, 50.0)]
+    assert mpc_profile_from_config()["heater_power"] == 50.0
     profile = mpc_profile_from_config(heater_power="180:72, 240:65, 300:60")
     assert profile["heater_power"] == [
         (180.0, 72.0),
@@ -707,3 +707,18 @@ def test_config_heater_power_formats():
     ]
     with pytest.raises(configfile.error, match="heater_power"):
         mpc_profile_from_config(heater_power="0")
+
+
+def test_profile_values_show_tables():
+    manager = heaters.Heater.ProfileManager.__new__(
+        heaters.Heater.ProfileManager
+    )
+    profile = mpc_profile_from_config(
+        heater_power="180:72, 300:60", fan_ambient_transfer="0.1, 0.2"
+    )
+    msg = manager._profile_fields_msg(profile)
+    assert "heater_power: 180:72, 300:60\n" in msg
+    assert "fan_ambient_transfer: 0:0.1, 1:0.2\n" in msg
+    assert "heater_power: 50.0\n" in manager._profile_fields_msg(
+        mpc_profile_from_config()
+    )

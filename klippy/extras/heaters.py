@@ -483,13 +483,17 @@ class Heater:
                     "smoothing", above=0.0, maxval=1.0, default=0.83
                 )
                 try:
-                    temp_profile["heater_power"] = parse_heater_power(
+                    heater_power = parse_heater_power(
                         config_section.getlist("heater_power")
                     )
                 except ValueError as e:
                     raise config_section.error(
                         f"Unable to parse option 'heater_power' in section '{config_section.get_name()}': {e}"
                     )
+                if len(heater_power) == 1:
+                    # A plain power, not a temperature:power table
+                    heater_power = heater_power[0][1]
+                temp_profile["heater_power"] = heater_power
                 temp_profile["sensor_responsiveness"] = config_section.getfloat(
                     "sensor_responsiveness", above=0.0, default=None
                 )
@@ -787,6 +791,12 @@ class Heater:
                     continue
                 if isinstance(value, (int, float, str)):
                     msg += "%s: %s\n" % (key, value)
+                elif value and isinstance(value, list):
+                    # Tables of value pairs (e.g. fan speed and heat loss)
+                    msg += "%s: %s\n" % (
+                        key,
+                        ", ".join("%g:%g" % pair for pair in value),
+                    )
             msg += "name: %s" % (profile["name"],)
             return msg
 

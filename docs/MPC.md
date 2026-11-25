@@ -190,7 +190,7 @@ To run the measurement:
 
 The routine measures the heater power needed to hold the temperature without extruding, then while extruding at each flow rate, and once more without extruding. The additional power divided by the amount of filament and the temperature rise is the heat capacity. Because the controller compensating for a wrong amount of filament heating disturbs the measurement, the measurement is repeated with the improved value, up to three times, until the result changes by less than 7%.
 
-A measurement takes two to five minutes and 150 to 450mm of 1.75mm filament with the default settings. The result is reported together with the `MPC_SET` command that restores it and is used until the next restart:
+A measurement takes two to five minutes and roughly 0.2 to 0.5m of 1.75mm filament with the default settings, depending on how many repetitions are needed. The result is reported together with the `MPC_SET` command that restores it and is used until the next restart:
 
 ```
 Finished MPC filament calibration of heater 'extruder'
