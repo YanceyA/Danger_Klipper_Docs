@@ -1,5 +1,6 @@
 """MPC controller and calibration tests against a simulated hotend."""
 
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -143,3 +144,87 @@ def test_virtual_sensors_report_model_state():
     )
     sensor.process_temp_update(control, 1.0)
     assert reported == [31.0]
+
+
+######################################################################
+# Calibration: model identification
+######################################################################
+
+
+def record_heatup(plant, target=200.0):
+    """Full power until `target`, then coast; like the calibration does."""
+    sim = Sim(plant=plant)
+    tuning = control_mpc.TuningControl(sim.heater)
+    sim.heater.control = tuning
+    tuning.logging = True
+    tuning.set_output(1.0, target)
+    while sim.heater.smoothed_temp < target:
+        sim.advance(0.3)
+    tuning.set_output(0.0, target)
+    sim.advance(control_mpc.HEATUP_COAST_TIME)
+    return tuning.log
+
+
+@pytest.mark.parametrize("noise", [0.0, 0.25])
+def test_fit_recovers_model_parameters(noise):
+    plant = Plant(heater_w=50.0, block_c=18.0, beta=0.25, h0=0.10, noise=noise)
+    fit = control_mpc.fit_thermal_model(record_heatup(plant), 25.0, 50.0, 0.3)
+    assert fit["block_heat_capacity"] == pytest.approx(18.0, rel=0.03)
+    assert fit["ambient_transfer"] == pytest.approx(0.10, rel=0.10)
+    assert fit["sensor_responsiveness"] == pytest.approx(0.25, rel=0.15)
+    assert fit["rms_error"] < noise + 0.1
+
+
+def test_fit_with_known_ambient_transfer():
+    plant = Plant(block_c=18.0, beta=0.25, h0=0.10)
+    fit = control_mpc.fit_thermal_model(
+        record_heatup(plant), 25.0, 50.0, 0.3, ambient_transfer=0.10
+    )
+    assert fit["ambient_transfer"] == 0.10
+    assert fit["block_heat_capacity"] == pytest.approx(18.0, rel=0.03)
+
+
+def test_fit_rejects_a_heater_that_did_not_heat():
+    samples = [(0.3 * i, 25.0, 1.0) for i in range(100)]
+    with pytest.raises(ValueError):
+        control_mpc.fit_thermal_model(samples, 25.0, 50.0, 0.3)
+    with pytest.raises(ValueError):
+        control_mpc.fit_thermal_model(samples[:5], 25.0, 50.0, 0.3)
+
+
+@pytest.mark.parametrize("beta", [0.125, 0.25, 0.5])
+def test_calibration_identifies_the_sensor(beta):
+    # The calibrated sensor responsiveness must follow the real sensor
+    plant = Plant(heater_w=50.0, block_c=18.0, beta=beta, h0=0.10)
+    values, _ = Sim(plant=plant).calibrate()
+    # The controller steps its model once per sensor update, so the value
+    # that reproduces the sensor is the per-update equivalent.
+    equivalent = (1.0 - math.exp(-beta * 0.3)) / 0.3
+    assert float(values["sensor_responsiveness"]) == pytest.approx(
+        equivalent, rel=0.1
+    )
+    assert float(values["block_heat_capacity"]) == pytest.approx(18.0, rel=0.05)
+    assert float(values["ambient_transfer"]) == pytest.approx(0.10, rel=0.05)
+
+
+@pytest.mark.parametrize(
+    "plant",
+    [
+        Plant(heater_w=70.0, block_c=25.0),
+        Plant(heater_w=40.0, block_c=14.0),
+        Plant(heater_w=50.0, block_c=18.0, ambient=45.0),
+        Plant(heater_w=50.0, block_c=18.0, noise=0.25),
+    ],
+    ids=["70W", "40W", "warm chamber", "noisy sensor"],
+)
+def test_calibration_across_hotends(plant):
+    values, _ = Sim(plant=plant, fan=FakeFan()).calibrate()
+    assert float(values["block_heat_capacity"]) == pytest.approx(
+        plant.block_c, rel=0.05
+    )
+    assert float(values["sensor_responsiveness"]) == pytest.approx(
+        plant.beta, rel=0.2
+    )
+    fan_table = [float(v) for v in values["fan_ambient_transfer"].split(",")]
+    assert fan_table[0] == pytest.approx(0.10, rel=0.06)
+    assert fan_table[-1] == pytest.approx(0.20, rel=0.06)

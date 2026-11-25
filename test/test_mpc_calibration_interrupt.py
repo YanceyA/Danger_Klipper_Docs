@@ -30,7 +30,7 @@ def test_mpc_fan_sweep_interrupt_restores_fan(dispatch):
     mpc.wait_stable = wait_stable
 
     def calibrate(gcmd):
-        mpc.transfer_test(gcmd, 20.0, 5.0, 2, {"post_block_temp": 200.0})
+        mpc.transfer_test(gcmd, 20.0, 5.0, 2, 200.0)
         pytest.fail("cancelled calibration continued")
 
     gcode.register_command("MPC_FAN_TEST", calibrate)

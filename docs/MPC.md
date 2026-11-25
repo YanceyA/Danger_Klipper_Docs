@@ -175,8 +175,8 @@ MPC works best knowing how much energy (in Joules) it takes to heat 1mm of filam
 The MPC default calibration routine takes the following steps:
 
 > 1. Cool to ambient: The calibration routine needs to know the approximate ambient temperature and waits until the hotend temperature stabilises and stops decreasing relative to ambient.
-> 2. Heat past 200°C: Measure the point where the temperature is increasing most rapidly, and the time and temperature at that point. Also, three temperature measurements are needed at some point after the initial latency has taken effect. 
-> 3. Hold temperature while measuring ambient heat-loss: At this point enough is known for the MPC algorithm to engage. The calibration routine makes a best guess at the overshoot past 200°C which will occur and targets this temperature for about a minute while ambient heat-loss is measured without and with the fan engaged (if a `cooling_fan` is specified).
+> 2. Heat past the target at full power, then switch the heater off for a few seconds: The whole temperature record, including the way the sensor overshoots and turns around once the heater is off, is fitted to the MPC model. This determines the heat capacity of the heater block and the responsiveness of the sensor.
+> 3. Hold temperature while measuring ambient heat-loss: At this point enough is known for the MPC algorithm to engage. The calibration routine holds the target temperature while ambient heat-loss is measured without and with the fan engaged (if a `cooling_fan` is specified). The model from step 2 is then refined using the measured heat-loss.
 > 4. The MPC calibration routine creates the appropriate model constants. At this time the model parameters are temporary and not yet saved to the printer configuration.  
 
 The MPC calibration routine must be run for each heater, to be controlled by MPC, in order to determine the model parameters. For an MPC calibration to be successful an extruder must be able to reach 200C. Calibration is performed with the following G-code command.
@@ -206,6 +206,11 @@ After successful  calibration the method will generate the key model parameters 
 
 ![Calibration Parameter Output](img/MPC_calibration_output.png)
 
+The calibration also reports how well the model matches the recorded heat-up, e.g. `Model fitted to 310 samples, error 0.25 degrees RMS`. An error of well under one degree is typical. A large error means that the heater did not behave like the model during the test, for example because `heater_power` is far from the real heater power, the part cooling fan was running, or the hotend was disturbed.
+
+> [!NOTE]
+> Kalico versions before the model fit was introduced calculated `sensor_responsiveness` incorrectly (the result was always close to 0.1, whatever the sensor) and `block_heat_capacity` could be off by 10-25%. Heaters calibrated with such a version should be calibrated again. The symptoms of the old values are a hotend that creeps towards the target for a long time after heating up and slow recovery from fan speed changes.
+
 A `SAVE_CONFIG` command is then required to commit these calibrated model parameters to the printer config or the user can manually update the values. The _SAVE_CONFIG_ block should then look like: 
 
 ```
@@ -231,7 +236,7 @@ These model parameters are not suitable for pre-configuration or are not explici
   Heat transfer from heater block to ambient in (W/K).  
   
 - `sensor_responsiveness:`  
-  A single constant representing the coefficient of heat transfer from heater block to sensor and heat capacity of the sensor in (K/s/K).  
+  A single constant representing the coefficient of heat transfer from heater block to sensor and heat capacity of the sensor in (K/s/K). The inverse is the time constant of the sensor in seconds: with a value of 0.25 the sensor needs about 4 seconds to follow most of a change in block temperature.  
   
 - `fan_ambient_transfer:`  
   Heat transfer from heater block to ambient in with fan enabled in (W/K).  
@@ -242,7 +247,9 @@ These model parameters are not suitable for pre-configuration or are not explici
 
 The following macro can be used to replace `M109` hotend temperature set and `M190` bed temperature set G-code commands with a macro utilizing `temperature_wait` G-codes. This can be utilized in systems where the sensor temperature takes an extended time to converge on the set temperature. 
 > [!NOTE]
-> This behaviour occurs primarily because MPC controls the modelled block temperature and not the hotend temperature sensor. For almost all cases, when temperature sensor overshoot/undershoot occurs, the block modelled temperature will be correctly at the set temperature. However, the Kalico system performs actions based on the sensor temperature only which can lead to undesirable delays in print actions with stock `M109` and `M190` commands.
+> This behaviour occurs because MPC controls the modelled block temperature and not the hotend temperature sensor. A sensor that responds slowly (a low `sensor_responsiveness`) is still catching up when the block has already reached the set temperature. However, the Kalico system performs actions based on the sensor temperature only which can lead to undesirable delays in print actions with stock `M109` and `M190` commands.
+>
+> If the delay is long, first make sure the heater was calibrated with a current Kalico version: an incorrect `sensor_responsiveness` makes MPC reduce the heater power before the block has really reached the set temperature, which looks the same.
 
 ```
 [gcode_macro M109] # Wait Hotend Temp

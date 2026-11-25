@@ -1,8 +1,15 @@
 import logging
 import math
+import time
 
 AMBIENT_TEMP = 25.0
 PIN_MIN_TIME = 0.100
+
+# Time the heater stays off after the calibration heat-up. The way the
+# sensor overshoots and turns around is what identifies the sensor lag.
+HEATUP_COAST_TIME = 10.0
+FIT_MAX_ITERATIONS = 400
+FIT_MIN_SAMPLES = 20
 
 FILAMENT_TEMP_SRC_AMBIENT = "ambient"
 FILAMENT_TEMP_SRC_FIXED = "fixed"
@@ -377,6 +384,202 @@ class ControlMPC:
         }
 
 
+######################################################################
+# Model identification
+######################################################################
+
+
+def _applied_duties(samples, pwm_delay):
+    """Average heater duty that was in effect between consecutive samples.
+
+    A duty requested at a sample only reaches the heater pwm_delay later.
+    """
+    times = [sample[0] for sample in samples]
+    count = len(samples)
+    duties = [0.0]
+    last = -1  # last request already in effect at the interval start
+    for idx in range(1, count):
+        start, end = times[idx - 1], times[idx]
+        while last + 1 < count and times[last + 1] + pwm_delay <= start:
+            last += 1
+        duty = samples[last][2] if last >= 0 else 0.0
+        total = 0.0
+        pos = start
+        nxt = last + 1
+        while nxt < count and times[nxt] + pwm_delay < end:
+            change = times[nxt] + pwm_delay
+            total += duty * (change - pos)
+            pos = change
+            duty = samples[nxt][2]
+            nxt += 1
+        total += duty * (end - pos)
+        duties.append(total / (end - start) if end > start else duty)
+    return duties
+
+
+def _simulate_model(
+    samples,
+    duties,
+    ambient_temp,
+    heater_power,
+    block_heat_capacity,
+    ambient_transfer,
+    sensor_responsiveness,
+):
+    """Run the thermal model used by ControlMPC over a recorded heat-up.
+
+    Returns the sum of squared sensor errors and the final modelled block
+    and sensor temperatures.
+    """
+    block_temp = sensor_temp = samples[0][1]
+    last_time = samples[0][0]
+    error = 0.0
+    for idx in range(1, len(samples)):
+        read_time, temp, _ = samples[idx]
+        dt = read_time - last_time
+        last_time = read_time
+        block_temp += (
+            (
+                duties[idx] * heater_power
+                - (block_temp - ambient_temp) * ambient_transfer
+            )
+            * dt
+            / block_heat_capacity
+        )
+        sensor_temp += (block_temp - sensor_temp) * sensor_responsiveness * dt
+        diff = sensor_temp - temp
+        error += diff * diff
+    return error, block_temp, sensor_temp
+
+
+def _nelder_mead(cost, start, step, max_iterations, tick=None):
+    """Minimal Nelder-Mead simplex minimiser"""
+    size = len(start)
+    points = [list(start)]
+    for idx in range(size):
+        point = list(start)
+        point[idx] += step
+        points.append(point)
+    values = [cost(point) for point in points]
+    for _ in range(max_iterations):
+        if tick is not None:
+            tick()
+        order = sorted(range(size + 1), key=values.__getitem__)
+        points = [points[idx] for idx in order]
+        values = [values[idx] for idx in order]
+        if values[-1] - values[0] <= 1e-9 * (values[0] + 1e-9):
+            break
+        worst = points[-1]
+        center = [
+            sum(point[idx] for point in points[:-1]) / size
+            for idx in range(size)
+        ]
+        reflected = [2.0 * center[idx] - worst[idx] for idx in range(size)]
+        reflected_value = cost(reflected)
+        if reflected_value < values[0]:
+            expanded = [
+                3.0 * center[idx] - 2.0 * worst[idx] for idx in range(size)
+            ]
+            expanded_value = cost(expanded)
+            if expanded_value < reflected_value:
+                points[-1], values[-1] = expanded, expanded_value
+            else:
+                points[-1], values[-1] = reflected, reflected_value
+        elif reflected_value < values[-2]:
+            points[-1], values[-1] = reflected, reflected_value
+        else:
+            contracted = [
+                0.5 * (center[idx] + worst[idx]) for idx in range(size)
+            ]
+            contracted_value = cost(contracted)
+            if contracted_value < values[-1]:
+                points[-1], values[-1] = contracted, contracted_value
+            else:
+                best = points[0]
+                points = [best] + [
+                    [0.5 * (best[idx] + point[idx]) for idx in range(size)]
+                    for point in points[1:]
+                ]
+                values = [values[0]] + [cost(point) for point in points[1:]]
+    best = min(range(size + 1), key=values.__getitem__)
+    return points[best], values[best]
+
+
+def fit_thermal_model(
+    samples,
+    ambient_temp,
+    heater_power,
+    pwm_delay,
+    ambient_transfer=None,
+    tick=None,
+):
+    """Least-squares fit of the MPC thermal model to a recorded heat-up.
+
+    samples is a list of (time, sensor temperature, requested duty). The
+    block heat capacity and sensor responsiveness are always fitted; the
+    ambient transfer is fitted too unless it is given. tick() is called
+    regularly so the caller can keep the reactor running.
+    """
+    if len(samples) < FIT_MIN_SAMPLES:
+        raise ValueError("Not enough temperature samples to fit the model")
+    duties = _applied_duties(samples, pwm_delay)
+    temps = [sample[1] for sample in samples]
+    rise = max(temps) - temps[0]
+    energy = sum(
+        duties[idx] * heater_power * (samples[idx][0] - samples[idx - 1][0])
+        for idx in range(1, len(samples))
+    )
+    if rise < 10.0 or energy <= 0.0:
+        raise ValueError("Heater did not heat up enough to fit the model")
+    fit_transfer = ambient_transfer is None
+
+    def unpack(params):
+        # Parameters are fitted as logarithms to keep them positive
+        values = [math.exp(max(-20.0, min(20.0, param))) for param in params]
+        if fit_transfer:
+            return values
+        return values + [ambient_transfer]
+
+    def cost(params):
+        capacity, responsiveness, transfer = unpack(params)
+        error, _, _ = _simulate_model(
+            samples,
+            duties,
+            ambient_temp,
+            heater_power,
+            capacity,
+            transfer,
+            responsiveness,
+        )
+        return error if math.isfinite(error) else float("inf")
+
+    start = [math.log(0.8 * energy / rise), math.log(0.2)]
+    if fit_transfer:
+        hottest = max(max(temps) - ambient_temp, 10.0)
+        start.append(math.log(heater_power / (4.0 * hottest)))
+    best, error = _nelder_mead(cost, start, 0.3, FIT_MAX_ITERATIONS, tick)
+    capacity, responsiveness, transfer = unpack(best)
+    if not math.isfinite(error):
+        raise ValueError("Unable to fit the thermal model")
+    _, block_temp, sensor_temp = _simulate_model(
+        samples,
+        duties,
+        ambient_temp,
+        heater_power,
+        capacity,
+        transfer,
+        responsiveness,
+    )
+    return {
+        "block_heat_capacity": capacity,
+        "sensor_responsiveness": responsiveness,
+        "ambient_transfer": transfer,
+        "rms_error": math.sqrt(error / (len(samples) - 1)),
+        "block_temp": block_temp,
+        "sensor_temp": sensor_temp,
+    }
+
+
 class MpcCalibrate:
     def __init__(self, printer, heater, orig_control):
         self.printer = printer
@@ -388,7 +591,6 @@ class MpcCalibrate:
             self._run(gcmd, calibration)
 
     def _run(self, gcmd, calibration):
-        use_analytic = gcmd.get("USE_DELTA", None) is not None
         ambient_max_measure_time = gcmd.get_float(
             "AMBIENT_MAX_MEASURE_TIME", 20.0, above=0.0
         )
@@ -408,15 +610,16 @@ class MpcCalibrate:
         old_control = calibration.set_control(control)
         try:
             ambient_temp = self.await_ambient(gcmd, control, threshold_temp)
-            samples = self.heatup_test(gcmd, target_temp, control)
-            first_res = self.process_first_pass(
-                samples,
-                self.orig_control.heater_max_power,
-                ambient_temp,
-                threshold_temp,
-                use_analytic,
+            heater_power = self.orig_control.const_heater_power
+            self.heatup_test(gcmd, target_temp, control)
+            # Fit the whole heat-up record. The heater stays off (and is
+            # still being recorded) while this runs.
+            fit = self.fit_model(gcmd, control.log, ambient_temp, heater_power)
+            logging.info("MPC calibration heat-up fit: %s", fit)
+            gcmd.respond_info(
+                "Model fitted to %d samples, error %.2f degrees RMS"
+                % (len(control.log), fit["rms_error"])
             )
-            logging.info("First pass: %s", first_res)
 
             profile = dict(self.orig_control.profile)
             for key in [
@@ -424,42 +627,49 @@ class MpcCalibrate:
                 "ambient_transfer",
                 "sensor_responsiveness",
             ]:
-                profile[key] = first_res[key]
+                profile[key] = fit[key]
             new_control = ControlMPC(profile, self.heater, False, False)
-            new_control.state_block_temp = first_res["post_block_temp"]
-            new_control.state_sensor_temp = first_res["post_sensor_temp"]
+            # Bring the model up to date with what was recorded since
+            samples = list(control.log)
+            _, block_temp, sensor_temp = _simulate_model(
+                samples,
+                _applied_duties(samples, self.heater.get_pwm_delay()),
+                ambient_temp,
+                heater_power,
+                fit["block_heat_capacity"],
+                fit["ambient_transfer"],
+                fit["sensor_responsiveness"],
+            )
+            new_control.state_block_temp = block_temp
+            new_control.state_sensor_temp = sensor_temp
             new_control.state_ambient_temp = ambient_temp
             calibration.set_control(new_control)
+            control.logging = False
 
             transfer_res = self.transfer_test(
                 gcmd,
                 ambient_max_measure_time,
                 ambient_measure_sample_time,
                 fan_breakpoints,
-                first_res,
+                target_temp,
             )
-            second_res = self.process_second_pass(
-                first_res,
-                transfer_res,
-                ambient_temp,
-                self.orig_control.heater_max_power,
-            )
-            logging.info("Second pass: %s", second_res)
-
-            block_heat_capacity = (
-                second_res["block_heat_capacity"]
-                if use_analytic
-                else first_res["block_heat_capacity"]
-            )
-            sensor_responsiveness = (
-                second_res["sensor_responsiveness"]
-                if use_analytic
-                else first_res["sensor_responsiveness"]
-            )
-            ambient_transfer = second_res["ambient_transfer"]
+            target_ambient_temp = transfer_res["target_temp"] - ambient_temp
+            ambient_transfer = transfer_res["base_power"] / target_ambient_temp
             fan_ambient_transfer = ", ".join(
-                [f"{p:.6g}" for p in second_res["fan_ambient_transfer"]]
+                [
+                    f"{power / target_ambient_temp:.6g}"
+                    for (_speed, power) in transfer_res["fan_powers"]
+                ]
             )
+            # The heat loss measured while holding the temperature is more
+            # accurate than what the heat-up alone can tell; refit the
+            # remaining parameters around it.
+            fit = self.fit_model(
+                gcmd, samples, ambient_temp, heater_power, ambient_transfer
+            )
+            logging.info("MPC calibration refit: %s", fit)
+            block_heat_capacity = fit["block_heat_capacity"]
+            sensor_responsiveness = fit["sensor_responsiveness"]
 
             cfgname = self.heater.get_name()
             gcmd.respond_info(
@@ -584,21 +794,44 @@ class MpcCalibrate:
         gcmd.respond_info(
             "Performing heatup test, target is %.1f degrees" % (target_temp,)
         )
+        interval = self.heater.get_pwm_delay()
+        control.log = []
+        control.logging = True
         control.set_output(self.heater.get_max_power(), target_temp)
 
-        control.logging = True
-
-        def process(eventtime):
+        def heating(eventtime):
             temp, _ = self.heater.get_temp(eventtime)
             return temp < target_temp
 
-        gcmd.wait_while(process)
-        control.logging = False
-        self.heater.alter_target(0.0)
+        gcmd.wait_while(heating, True, interval)
+        # Let the heater coast. Recording continues, also after returning,
+        # until the caller switches the tuning controller off.
+        control.set_output(0.0, target_temp)
+        gcmd.sleep(HEATUP_COAST_TIME)
 
-        log = control.log
-        control.log = []
-        return log
+    def fit_model(
+        self, gcmd, samples, ambient_temp, heater_power, ambient_transfer=None
+    ):
+        last_yield = [time.monotonic()]
+
+        def tick():
+            # The fit takes a noticeable amount of CPU time on small hosts;
+            # give the reactor a chance to run.
+            if time.monotonic() - last_yield[0] > 0.050:
+                gcmd.sleep(0.001)
+                last_yield[0] = time.monotonic()
+
+        try:
+            return fit_thermal_model(
+                list(samples),
+                ambient_temp,
+                heater_power,
+                self.heater.get_pwm_delay(),
+                ambient_transfer,
+                tick,
+            )
+        except ValueError as e:
+            raise self.printer.command_error(str(e))
 
     def transfer_test(
         self,
@@ -606,9 +839,8 @@ class MpcCalibrate:
         ambient_max_measure_time,
         ambient_measure_sample_time,
         fan_breakpoints,
-        first_pass_results,
+        target_temp,
     ):
-        target_temp = round(first_pass_results["post_block_temp"])
         self.heater.set_temp(target_temp)
         gcmd.respond_info(
             "Performing ambient transfer tests, target is %.1f degrees"
@@ -682,129 +914,6 @@ class MpcCalibrate:
 
         return total_energy / total_time
 
-    def fastest_rate(self, samples):
-        best = [-1, 0, 0]
-        base_t = samples[0][0]
-        for idx in range(2, len(samples)):
-            dT = samples[idx][1] - samples[idx - 2][1]
-            dt = samples[idx][0] - samples[idx - 2][0]
-            rate = dT / dt
-            if rate > best[0]:
-                sample = samples[idx - 1]
-                best = [sample[0] - base_t, sample[1], rate]
-        return best
-
-    def process_first_pass(
-        self,
-        all_samples,
-        heater_power,
-        ambient_temp,
-        threshold_temp,
-        use_analytic,
-    ):
-        # Find a continous segment of samples that all lie in the threshold.. range
-        best_lower = None
-        for idx in range(0, len(all_samples)):
-            if all_samples[idx][1] > threshold_temp and best_lower is None:
-                best_lower = idx
-            elif all_samples[idx][1] < threshold_temp:
-                best_lower = None
-
-        t1_time = all_samples[best_lower][0] - all_samples[0][0]
-
-        samples = all_samples[best_lower:]
-        pitch = math.floor((len(samples) - 1) / 2)
-        # We pick samples 0, pitch, and 2pitch, ensuring matching time spacing
-        dt = samples[pitch][0] - samples[0][0]
-        t1 = samples[0][1]
-        t2 = samples[pitch][1]
-        t3 = samples[2 * pitch][1]
-
-        asymp_T = (t2 * t2 - t1 * t3) / (2.0 * t2 - t1 - t3)
-        block_responsiveness = -math.log((t2 - asymp_T) / (t1 - asymp_T)) / dt
-        ambient_transfer = heater_power / (asymp_T - ambient_temp)
-
-        block_heat_capacity = -1.0
-        sensor_responsiveness = -1.0
-        start_temp = all_samples[0][1]
-
-        # Asymptotic method
-        if use_analytic:
-            block_heat_capacity = ambient_transfer / block_responsiveness
-            sensor_responsiveness = block_responsiveness / (
-                1.0
-                - (start_temp - asymp_T)
-                * math.exp(-block_responsiveness * t1_time)
-                / (t1 - asymp_T)
-            )
-
-        # Differential method
-        if (
-            not use_analytic
-            or block_heat_capacity < 0
-            or sensor_responsiveness < 0
-        ):
-            fastest_rate = self.fastest_rate(samples)
-            block_heat_capacity = heater_power / fastest_rate[2]
-            sensor_responsiveness = fastest_rate[2] / (
-                fastest_rate[2] * fastest_rate[0]
-                + ambient_temp
-                - fastest_rate[0]
-            )
-
-        heat_time = all_samples[-1][0] - all_samples[0][0]
-        post_block_temp = asymp_T + (start_temp - asymp_T) * math.exp(
-            -block_responsiveness * heat_time
-        )
-        post_sensor_temp = all_samples[-1][1]
-
-        return {
-            "post_block_temp": post_block_temp,
-            "post_sensor_temp": post_sensor_temp,
-            "block_responsiveness": block_responsiveness,
-            "ambient_transfer": ambient_transfer,
-            "block_heat_capacity": block_heat_capacity,
-            "sensor_responsiveness": sensor_responsiveness,
-            "asymp_temp": asymp_T,
-            "t1": t1,
-            "t1_time": t1_time,
-            "t2": t2,
-            "start_temp": start_temp,
-            "dt": dt,
-        }
-
-    def process_second_pass(
-        self, first_res, transfer_res, ambient_temp, heater_power
-    ):
-        target_ambient_temp = transfer_res["target_temp"] - ambient_temp
-        ambient_transfer = transfer_res["base_power"] / target_ambient_temp
-        asymp_T = ambient_temp + heater_power / ambient_transfer
-        block_responsiveness = (
-            -math.log((first_res["t2"] - asymp_T) / (first_res["t1"] - asymp_T))
-            / first_res["dt"]
-        )
-        block_heat_capacity = ambient_transfer / block_responsiveness
-        sensor_responsiveness = block_responsiveness / (
-            1.0
-            - (first_res["start_temp"] - asymp_T)
-            * math.exp(-block_responsiveness * first_res["t1_time"])
-            / (first_res["t1"] - asymp_T)
-        )
-
-        fan_ambient_transfer = [
-            power / target_ambient_temp
-            for (_speed, power) in transfer_res["fan_powers"]
-        ]
-
-        return {
-            "ambient_transfer": ambient_transfer,
-            "block_responsiveness": block_responsiveness,
-            "block_heat_capacity": block_heat_capacity,
-            "sensor_responsiveness": sensor_responsiveness,
-            "asymp_temp": asymp_T,
-            "fan_ambient_transfer": fan_ambient_transfer,
-        }
-
 
 class TuningControl:
     def __init__(self, heater):
@@ -816,7 +925,7 @@ class TuningControl:
 
     def temperature_update(self, read_time, temp, target_temp):
         if self.logging:
-            self.log.append((read_time, temp))
+            self.log.append((read_time, temp, self.value))
         self.heater.set_pwm(read_time, self.value)
 
     def check_busy(self, eventtime, smoothed_temp, target_temp):

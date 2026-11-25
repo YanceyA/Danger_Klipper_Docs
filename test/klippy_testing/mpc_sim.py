@@ -269,6 +269,9 @@ class FakeGCmd:
     def respond_info(self, msg):
         self.responses.append(msg)
 
+    def sleep(self, duration, error_on_cancel=True):
+        self.sim.advance(duration)
+
     def wait_while(self, condition_cb, error_on_cancel=True, interval=1.0):
         start = self.sim.time
         while condition_cb(self.sim.time):

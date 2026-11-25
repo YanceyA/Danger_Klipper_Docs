@@ -291,6 +291,7 @@ def calibration_heater(dispatch):
     heater.min_temp = 0.0
     heater.max_temp = 300.0
     heater.max_power = 1.0
+    heater.pwm_delay = 0.3
     heater.lock = threading.Lock()
     heater._calibration = None
     heater.smoothed_temp = 20.0
@@ -301,6 +302,7 @@ def calibration_heater(dispatch):
     heater.set_pwm = lambda time, value: pwm.append(value)
     heater.control = SimpleNamespace(
         ambient_sensor=SimpleNamespace(get_temp=lambda eventtime: (20, 0)),
+        const_heater_power=50.0,
         temperature_update=lambda time, temp, target: heater.set_pwm(time, 0.0),
     )
     return heater, pwm
