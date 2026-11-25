@@ -42,9 +42,10 @@ class MPC_AMBIENT_TEMP_WRAPPER:
         return self.heater.sensor.get_report_time_delta()
 
     def process_temp_update(self, control, read_time):
-        if control.get_type() == "mpc" or control.get_type() == "tuning":
-            self.temp = self.heater.get_control().state_ambient_temp
-        else:
+        # Not every controller models the ambient temperature (e.g. the
+        # tuning controller used while calibrating).
+        self.temp = getattr(control, "state_ambient_temp", None)
+        if self.temp is None:
             self.temp = heaters.AMBIENT_TEMP
 
         if self.temp is not None:

@@ -201,8 +201,11 @@ class ControlMPC:
         # Modulate ambient transfer coefficient with fan speed
         ambient_transfer = self.const_ambient_transfer
         if self.cooling_fan and len(self.const_fan_ambient_transfer) > 1:
+            # Use the requested fan value (0..1), which is what calibration
+            # indexes the table by. The reported "speed" is scaled by the
+            # fan's max_power and would read the wrong part of the curve.
             fan_speed = max(
-                0.0, min(1.0, self.cooling_fan.get_status(read_time)["speed"])
+                0.0, min(1.0, self.cooling_fan.get_status(read_time)["value"])
             )
             fan_break = fan_speed * (len(self.const_fan_ambient_transfer) - 1)
             below = self.const_fan_ambient_transfer[math.floor(fan_break)]
@@ -220,8 +223,11 @@ class ControlMPC:
         # Expected power from block to ambient
         block_ambient_delta = self.state_block_temp - self.state_ambient_temp
         expected_ambient_transfer = block_ambient_delta * ambient_transfer
+        block_filament_delta = self.state_block_temp - self.filament_temp(
+            read_time, self.state_ambient_temp
+        )
         expected_filament_transfer = (
-            block_ambient_delta
+            block_filament_delta
             * extrude_speed_prev
             * self.const_filament_cross_section_heat_capacity
         )
@@ -258,7 +264,10 @@ class ControlMPC:
             if temp != 0.0:
                 self.state_ambient_temp = temp
                 self.want_ambient_refresh = False
-        if (self.last_power > 0 and self.last_power < 1.0) or abs(
+        # Only correct ambient when close to steady state: the output power
+        # is not clipped, or the asymptotic temperature is reached.
+        # (last_power is in watts, so compare against the maximum power)
+        if (0.0 < self.last_power < self.heater_max_power) or abs(
             expected_block_dT + adjustment_dT
         ) < self.const_steady_state_rate * dt:
             if adjustment_dT > 0.0:

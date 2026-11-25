@@ -41,9 +41,10 @@ class MPC_BLOCK_TEMP_WRAPPER:
         return self.heater.sensor.get_report_time_delta()
 
     def process_temp_update(self, control, read_time):
-        if control.get_type() == "mpc" or control.get_type() == "tuning":
-            self.temp = self.heater.get_control().state_block_temp
-        else:
+        # Not every controller models the block (e.g. the tuning controller
+        # used while calibrating); fall back to the measured temperature.
+        self.temp = getattr(control, "state_block_temp", None)
+        if self.temp is None:
             self.temp = self.heater.smoothed_temp
 
         if self.temp is not None:
