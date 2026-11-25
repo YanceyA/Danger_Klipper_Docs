@@ -87,6 +87,14 @@ These can be specified in the config but should not need to be changed from the 
   _Default Value: ambient_  
   The temperature of the filament entering the hotend, used by filament feed forward. Either `ambient` (the simulated ambient temperature), `sensor` (the `ambient_temp_sensor`) or a fixed temperature in deg C. It can be changed at runtime with `MPC_SET ... FILAMENT_TEMP=`.  
   
+- `disturbance_estimator:`  
+  _Default Value: ambient_  
+  How MPC accounts for what its model gets wrong. `ambient` adjusts the simulated ambient temperature. `power` estimates the unmodelled heat loss directly, see [Power Disturbance Estimator](#power-disturbance-estimator).  
+
+- `disturbance_gain:`  
+  _Default Value: 1.0_  
+  Only used with `disturbance_estimator: power`. Larger values learn an unmodelled heat loss faster but react more to sensor noise and to short disturbances.  
+
 - `ambient_temp_sensor: temperature_sensor <sensor_name>`  
   _Default Value: MPC ESTIMATE_  
   It is recommended not to specify this parameter and let MPC estimate the ambient temperature. This is used for initial state temperature and calibration but not for actual control.
@@ -400,7 +408,43 @@ https://192.168.xxx.xxx:7125/printer/objects/query?extruder
 
 ![Calibration](img/MPC_realtime_output.png)
 
+The `control_stats` section of the output contains:
+
+- `temp_block`, `temp_sensor`, `temp_ambient`: the modelled block, sensor and ambient temperatures.
+- `power`: the heater power requested by MPC in watts.
+- `loss_ambient`, `loss_filament`: the modelled heat loss to the ambient air (including the fan) and into the filament in watts.
+- `disturbance`: the unmodelled heat loss in watts estimated with `disturbance_estimator: power` (always 0 with the `ambient` estimator).
+
 # EXPERIMENTAL FEATURES
+
+## Power Disturbance Estimator
+
+No model is perfect: the fan curve is measured in still air, the specific heat of the filament is an approximation, and the airflow around the nozzle changes with the part being printed. MPC has to absorb such errors.
+
+By default (`disturbance_estimator: ambient`) MPC does this the way Marlin does, by adjusting its simulated ambient temperature. This works, but it is slow, about 1°C of ambient temperature per second, which corresponds to only around 0.1 W per second. A fan that is not in the model takes minutes to be compensated, and the simulated ambient temperature can end up far away from anything physical.
+
+With `disturbance_estimator: power` MPC estimates the unmodelled heat loss directly, in watts, with gains derived from the calibrated model:
+
+```
+[extruder]
+control: mpc
+disturbance_estimator: power
+```
+
+- The ambient temperature is no longer adjusted. It is taken from `ambient_temp_sensor` if one is configured and assumed to be 25°C otherwise. An ambient temperature that differs from this (e.g. a heated chamber) simply becomes part of the estimated heat loss.
+- The model is updated with the power the heater really received. Kalico does not send small changes of the heater output to the MCU right away, and the power estimator takes this into account.
+- The estimate is frozen while the heater output is at its limit for more than a second (heating up, or more flow than the heater can supply) and cleared when the heater is switched off.
+
+In simulation the power estimator recovers from an error in the model two to five times faster than the ambient estimator, for example from a `filament_heat_capacity` that is 30% off or a fan curve that does not match, and performs the same when the model is accurate. The peak temperature error right after a disturbance is not reduced. It has not yet been validated on a wide range of hardware, which is why it is not the default.
+
+> [!NOTE]
+> The power estimator relies on an accurate `sensor_responsiveness` and `block_heat_capacity`. Run `MPC_CALIBRATE` with a current Kalico version before enabling it.
+
+The estimator can be changed at runtime to compare the two on the same print:
+
+`MPC_SET HEATER=<heater> [DISTURBANCE_ESTIMATOR=<ambient|power>] [DISTURBANCE_GAIN=<value>]`
+
+The calibration always uses the `ambient` estimator.
 
 ## Bed Heater
 

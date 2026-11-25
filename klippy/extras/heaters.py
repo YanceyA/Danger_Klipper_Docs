@@ -493,6 +493,14 @@ class Heater:
                 temp_profile["sensor_responsiveness"] = config_section.getfloat(
                     "sensor_responsiveness", above=0.0, default=None
                 )
+                temp_profile["disturbance_estimator"] = (
+                    config_section.getchoice(
+                        "disturbance_estimator", ["ambient", "power"], "ambient"
+                    )
+                )
+                temp_profile["disturbance_gain"] = config_section.getfloat(
+                    "disturbance_gain", above=0.0, default=1.0
+                )
                 temp_profile["min_ambient_change"] = config_section.getfloat(
                     "min_ambient_change", above=0.0, default=1.0
                 )

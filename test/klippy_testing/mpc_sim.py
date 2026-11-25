@@ -319,6 +319,8 @@ class Sim:
             "ambient_temp_sensor": None,
             "cooling_fan": self.fan,
             "fan_ambient_transfer": [],
+            "disturbance_estimator": control_mpc.ESTIMATOR_AMBIENT,
+            "disturbance_gain": 1.0,
         }
         profile.update(overrides)
         return profile

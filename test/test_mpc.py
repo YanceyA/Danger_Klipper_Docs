@@ -5,7 +5,7 @@ import math
 from types import SimpleNamespace
 
 import pytest
-from klippy_testing.mpc_sim import FakeFan, Plant, Sim
+from klippy_testing.mpc_sim import FakeFan, FakeGCmd, Plant, Sim, SimError
 
 from klippy import configfile
 from klippy.extras import (
@@ -166,6 +166,129 @@ def test_ambient_frozen_while_output_is_clipped():
     control.last_power = control.heater_max_power
     control.temperature_update(sim.time + 0.3, 200.5, 200.0)
     assert control.state_ambient_temp == control_mpc.AMBIENT_TEMP
+
+
+######################################################################
+# Power estimator
+######################################################################
+
+
+def hold_then_disturb(estimator, fan_speed=1.0, hold=120.0, after=120.0):
+    """Hold 200C, then switch on a fan the model knows nothing about.
+
+    Returns the simulation, the controller and the accumulated block
+    temperature error (K*s) after the fan was switched on.
+    """
+    fan = FakeFan()
+    sim = Sim(plant=Plant(h0=0.10, h_fan=0.10), fan=fan)
+    control = sim.make_control(**CALIBRATED, disturbance_estimator=estimator)
+    sim.heater.set_temp(200.0)
+    sim.advance(hold)
+    start = len(sim.log)
+    fan.set_speed(fan_speed)
+    sim.advance(after)
+    error = sum(abs(row[2] - 200.0) for row in sim.log[start:]) * 0.3
+    return sim, control, error
+
+
+def test_observer_gains():
+    block, sensor, disturbance = control_mpc.observer_gains(
+        18.0, 0.1, 0.25, 0.3
+    )
+    assert 0.0 < sensor < block < 1.0
+    # A sensor reading above the model means less heat is lost than modelled
+    assert disturbance < 0.0
+    faster = control_mpc.observer_gains(18.0, 0.1, 0.25, 0.3, 4.0)
+    assert faster[2] < disturbance
+
+
+def test_power_estimator_holds_temperature():
+    sim, control, _ = hold_then_disturb("power", fan_speed=0.0)
+    assert sim.plant.block_temp == pytest.approx(200.0, abs=0.2)
+    assert abs(control.state_disturbance) < 1.0
+    assert control.state_ambient_temp == control_mpc.AMBIENT_TEMP
+
+
+def test_power_estimator_recovers_faster_from_unmodelled_heat_loss():
+    _, _, ambient_error = hold_then_disturb("ambient")
+    sim, control, power_error = hold_then_disturb("power")
+    assert power_error < 0.4 * ambient_error
+    assert sim.plant.block_temp == pytest.approx(200.0, abs=0.3)
+    # The fan takes 0.1 W/K * 175 K the model does not know about, and the
+    # ambient temperature estimate is left alone.
+    assert control.state_disturbance == pytest.approx(17.5, rel=0.1)
+    assert control.state_ambient_temp == control_mpc.AMBIENT_TEMP
+
+
+def test_ambient_estimator_blames_ambient_temperature():
+    _, control, _ = hold_then_disturb("ambient", after=300.0)
+    assert control.state_disturbance == 0.0
+    assert control.state_ambient_temp < -50.0
+
+
+def test_power_estimator_ignores_clipped_output_and_resets_when_off():
+    sim = Sim()
+    control = hot_control(sim, disturbance_estimator="power")
+    control.state_disturbance = 5.0
+    control.last_power = control.heater_max_power
+    read_time = sim.time
+    for _ in range(10):
+        read_time += 0.3
+        control.temperature_update(read_time, 190.0, 200.0)
+        control.last_power = control.heater_max_power
+    # Clipped for longer than OBSERVER_CLIPPED_TIME: only the first updates
+    # may have changed the estimate.
+    frozen = control.state_disturbance
+    control.temperature_update(read_time + 0.3, 190.0, 200.0)
+    assert control.state_disturbance == frozen
+    control.temperature_update(read_time + 0.6, 190.0, 0.0)
+    assert control.state_disturbance == 0.0
+
+
+def test_model_uses_the_duty_the_heater_applied():
+    sim = Sim()
+    control = hot_control(sim, disturbance_estimator="power")
+    control.applied_history = [(0.0, 0.0), (10.0, 1.0), (10.6, 0.5)]
+    assert control._applied_duty(9.4, 10.0) == 0.0
+    assert control._applied_duty(10.0, 10.6) == pytest.approx(1.0)
+    assert control._applied_duty(10.3, 10.9) == pytest.approx(0.75)
+    assert control._applied_duty(20.0, 20.3) == pytest.approx(0.5)
+    # Changes the heater suppressed are not recorded as applied
+    # (holding 200C takes a duty of about 0.35; the heater ignores changes
+    # of less than 0.05 for a while)
+    sim.heater.last_pwm_value = 0.36
+    sim.heater.next_pwm_time = sim.time + 10.0
+    control.applied_history = [(0.0, 0.36)]
+    control.state_block_temp = control.state_sensor_temp = 200.0
+    control.temperature_update(sim.time + 0.3, 200.0, 200.0)
+    requested = control.last_power / control.full_heater_power
+    assert requested != 0.36 and abs(requested - 0.36) < 0.05
+    assert control.applied_history == [(0.0, 0.36)]
+
+
+def test_mpc_set_switches_estimator():
+    sim = Sim()
+    control = hot_control(sim)
+    assert control.observer_gains is None
+    control.state_ambient_temp = -40.0
+    control.cmd_MPC_SET(FakeGCmd(sim, {"DISTURBANCE_ESTIMATOR": "power"}))
+    assert control.estimator == "power"
+    assert control.observer_gains is not None
+    assert control.state_ambient_temp == control_mpc.AMBIENT_TEMP
+    slow = control.observer_gains
+    control.cmd_MPC_SET(FakeGCmd(sim, {"DISTURBANCE_GAIN": "4"}))
+    assert control.observer_gains[2] < slow[2]
+    with pytest.raises(SimError):
+        control.cmd_MPC_SET(FakeGCmd(sim, {"DISTURBANCE_ESTIMATOR": "x"}))
+
+
+def test_calibration_is_independent_of_the_estimator():
+    def calibrate(estimator):
+        sim = Sim(plant=Plant(), fan=FakeFan())
+        values, _ = sim.calibrate(disturbance_estimator=estimator)
+        return values
+
+    assert calibrate("power") == calibrate("ambient")
 
 
 ######################################################################
@@ -442,6 +565,19 @@ def test_config_fan_table_formats():
     assert mpc_profile_from_config()["fan_ambient_transfer"] == []
     with pytest.raises(configfile.error, match="fan_ambient_transfer"):
         mpc_profile_from_config(fan_ambient_transfer="0:0.1, 2:0.3")
+
+
+def test_config_disturbance_estimator():
+    profile = mpc_profile_from_config()
+    assert profile["disturbance_estimator"] == "ambient"
+    assert profile["disturbance_gain"] == 1.0
+    profile = mpc_profile_from_config(
+        disturbance_estimator="power", disturbance_gain="2.5"
+    )
+    assert profile["disturbance_estimator"] == "power"
+    assert profile["disturbance_gain"] == 2.5
+    with pytest.raises(configfile.error):
+        mpc_profile_from_config(disturbance_estimator="kalman")
 
 
 def test_config_heater_power_formats():

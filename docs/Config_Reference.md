@@ -1152,6 +1152,7 @@ control:
 #filament_diameter: 1.75
 #filament_density: 1.2
 #filament_heat_capacity: 1.8
+#disturbance_estimator: ambient
 #
 #pwm_cycle_time: 0.100
 #   Time in seconds for each software PWM cycle of the heater. It is

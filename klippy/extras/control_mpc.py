@@ -27,9 +27,80 @@ FAN_SWEEP_MAX_POWER = 0.95
 HEATER_POWER_MIN_RATIO = 0.5
 HEATER_POWER_MAX_RATIO = 2.0
 
+# How the controller accounts for what its model gets wrong
+ESTIMATOR_AMBIENT = "ambient"  # adjust the simulated ambient temperature
+ESTIMATOR_POWER = "power"  # estimate the unmodelled heat loss in watts
+# Noise assumed by the power estimator: how much the block temperature (K),
+# the sensor temperature (K) and the unmodelled heat loss (W) may wander per
+# second (as variances), and the variance of a sensor reading (K).
+OBSERVER_BLOCK_NOISE = 3.3e-4
+OBSERVER_SENSOR_NOISE = 3.3e-6
+OBSERVER_DISTURBANCE_NOISE = 3.3e-3
+OBSERVER_MEASUREMENT_NOISE = 1.0e-2
+# The unmodelled heat loss is not updated once the output has been at its
+# limit for this long; large transients say little about it.
+OBSERVER_CLIPPED_TIME = 1.0
+
 FILAMENT_TEMP_SRC_AMBIENT = "ambient"
 FILAMENT_TEMP_SRC_FIXED = "fixed"
 FILAMENT_TEMP_SRC_SENSOR = "sensor"
+
+
+def observer_gains(
+    block_heat_capacity,
+    ambient_transfer,
+    sensor_responsiveness,
+    dt,
+    disturbance_gain=1.0,
+):
+    """Steady state Kalman gains for the power estimator.
+
+    The estimated state is (block temperature, sensor temperature,
+    unmodelled heat loss); only the sensor temperature is measured. Returns
+    how much of the difference between the measured and the modelled sensor
+    temperature is applied to each of the three.
+    """
+    block_decay = 1.0 - dt * ambient_transfer / block_heat_capacity
+    block_loss = -dt / block_heat_capacity
+    follow = dt * sensor_responsiveness
+    # One model step, exactly as temperature_update() performs it
+    model = [
+        [block_decay, 0.0, block_loss],
+        [follow * block_decay, 1.0 - follow, follow * block_loss],
+        [0.0, 0.0, 1.0],
+    ]
+    noise = [
+        OBSERVER_BLOCK_NOISE * dt,
+        OBSERVER_SENSOR_NOISE * dt,
+        OBSERVER_DISTURBANCE_NOISE * dt * disturbance_gain,
+    ]
+    size = range(3)
+    covar = [[1.0 if row == col else 0.0 for col in size] for row in size]
+    gains = [0.0, 0.0, 0.0]
+    for _ in range(20000):
+        # Predict: covar = model * covar * model^T + noise
+        tmp = [
+            [sum(model[row][k] * covar[k][col] for k in size) for col in size]
+            for row in size
+        ]
+        covar = [
+            [sum(tmp[row][k] * model[col][k] for k in size) for col in size]
+            for row in size
+        ]
+        for idx in size:
+            covar[idx][idx] += noise[idx]
+        # Correct with a measurement of the sensor temperature
+        scale = covar[1][1] + OBSERVER_MEASUREMENT_NOISE
+        new_gains = [covar[row][1] / scale for row in size]
+        covar = [
+            [covar[row][col] - new_gains[row] * covar[1][col] for col in size]
+            for row in size
+        ]
+        change = max(abs(new_gains[idx] - gains[idx]) for idx in size)
+        gains = new_gains
+        if change < 1e-10:
+            break
+    return tuple(gains)
 
 
 def parse_heater_power(entries):
@@ -154,7 +225,12 @@ class ControlMPC:
         )
         self.state_sensor_temp = self.state_block_temp
         self.state_ambient_temp = AMBIENT_TEMP
+        self.state_disturbance = 0.0
+        self.clipped_time = 0.0
+        # Duty the heater was really given, as (time it took effect, duty)
+        self.applied_history = [(0.0, getattr(heater, "last_pwm_value", 0.0))]
         self._update_heater_power()
+        self._update_observer()
 
         self.last_power = 0.0
         self.last_loss_ambient = 0.0
@@ -220,6 +296,25 @@ class ControlMPC:
                     " or of fan speed:value pairs ('0:0.05,0.3:0.07,1:0.08')"
                 )
 
+        estimator = gcmd.get("DISTURBANCE_ESTIMATOR", None)
+        if estimator is not None:
+            estimator = estimator.lower().strip()
+            if estimator not in (ESTIMATOR_AMBIENT, ESTIMATOR_POWER):
+                raise gcmd.error(
+                    f"Error on '{gcmd._commandline}': DISTURBANCE_ESTIMATOR"
+                    " must be 'ambient' or 'power'"
+                )
+            if estimator != self.estimator:
+                # Start the newly selected estimator from a clean state
+                self.state_disturbance = 0.0
+                self.state_ambient_temp = AMBIENT_TEMP
+                self.want_ambient_refresh = self.ambient_sensor is not None
+            self.estimator = estimator
+        self.const_disturbance_gain = gcmd.get_float(
+            "DISTURBANCE_GAIN", self.const_disturbance_gain, above=0.0
+        )
+        self._update_observer()
+
         temp = gcmd.get("FILAMENT_TEMP", None)
         if temp is not None:
             temp = temp.lower().strip()
@@ -272,6 +367,10 @@ class ControlMPC:
         self.ambient_sensor = self.profile["ambient_temp_sensor"]
         self.cooling_fan = self.profile["cooling_fan"]
         self.const_fan_ambient_transfer = self.profile["fan_ambient_transfer"]
+        self.estimator = self.profile.get(
+            "disturbance_estimator", ESTIMATOR_AMBIENT
+        )
+        self.const_disturbance_gain = self.profile.get("disturbance_gain", 1.0)
 
     def is_valid(self):
         return (
@@ -299,6 +398,30 @@ class ControlMPC:
         self.heater_max_power = (
             self.heater.get_max_power() * self.full_heater_power
         )
+
+    def _update_observer(self):
+        self.observer_gains = None
+        if self.estimator == ESTIMATOR_POWER and self.is_valid():
+            self.observer_gains = observer_gains(
+                self.const_block_heat_capacity,
+                self.const_ambient_transfer,
+                self.const_sensor_responsiveness,
+                self.heater.get_pwm_delay(),
+                self.const_disturbance_gain,
+            )
+
+    def _applied_duty(self, start, end):
+        """Average duty the heater was really given between two times"""
+        history = self.applied_history
+        while len(history) > 1 and history[1][0] <= start:
+            history.pop(0)
+        total = 0.0
+        for idx, (since, duty) in enumerate(history):
+            until = history[idx + 1][0] if idx + 1 < len(history) else end
+            since, until = max(since, start), min(until, end)
+            if until > since:
+                total += duty * (until - since)
+        return total / (end - start)
 
     def _update_filament_const(self):
         radius = self.const_filament_diameter / 2.0
@@ -356,6 +479,80 @@ class ControlMPC:
                 self.const_fan_ambient_transfer, fan_speed
             )
 
+        if self.estimator == ESTIMATOR_POWER and self.observer_gains:
+            self._estimate_power(
+                read_time,
+                dt,
+                temp,
+                target_temp,
+                ambient_transfer,
+                extrude_speed_prev,
+            )
+        else:
+            self._estimate_ambient(
+                read_time, dt, temp, ambient_transfer, extrude_speed_prev
+            )
+
+        # Output
+
+        self._update_heater_power()
+
+        # Amount of power needed to reach the target temperature in the desired time
+
+        heating_power = (
+            (target_temp - self.state_block_temp)
+            * self.const_block_heat_capacity
+            / self.const_target_reach_time
+        )
+        # Losses (+ = lost from block, - = gained to block)
+        block_ambient_delta = self.state_block_temp - self.state_ambient_temp
+        loss_ambient = block_ambient_delta * ambient_transfer
+        block_filament_delta = self.state_block_temp - self.filament_temp(
+            read_time, self.state_ambient_temp
+        )
+        loss_filament = (
+            block_filament_delta
+            * extrude_speed_next
+            * self.const_filament_cross_section_heat_capacity
+        )
+
+        if target_temp != 0.0:
+            # The required power is the desired heating power + compensation for all the losses
+            power = max(
+                0.0,
+                min(
+                    self.heater_max_power,
+                    heating_power
+                    + loss_ambient
+                    + loss_filament
+                    + self.state_disturbance,
+                ),
+            )
+        else:
+            power = 0
+
+        duty = power / self.full_heater_power
+
+        self.last_power = power
+        self.last_loss_ambient = loss_ambient
+        self.last_loss_filament = loss_filament
+        self.last_temp_time = read_time
+        self.heater.set_pwm(read_time, duty)
+        # The heater suppresses small changes, and turns itself off without
+        # a target: remember what it really applied.
+        applied = self.heater.last_pwm_value
+        if applied != self.applied_history[-1][1]:
+            self.applied_history.append(
+                (read_time + self.heater.get_pwm_delay(), applied)
+            )
+
+    def _estimate_ambient(
+        self, read_time, dt, temp, ambient_transfer, extrude_speed_prev
+    ):
+        """
+        Update the modelled temperatures. What the model gets wrong is
+        absorbed by slowly adjusting the simulated ambient temperature.
+        """
         # Simulate
 
         # Expected power by heating at last power setting
@@ -420,66 +617,73 @@ class ControlMPC:
                 )
             self.state_ambient_temp += ambient_delta
 
-        # Output
+    def _estimate_power(
+        self,
+        read_time,
+        dt,
+        temp,
+        target_temp,
+        ambient_transfer,
+        extrude_speed_prev,
+    ):
+        """
+        Update the modelled temperatures. What the model gets wrong is
+        estimated directly as an unmodelled heat loss in watts, using fixed
+        (steady state Kalman) gains. The ambient temperature is not adapted.
+        """
+        if self.ambient_sensor is not None:
+            ambient_temp = self.ambient_sensor.get_temp(read_time)[0]
+            if ambient_temp != 0.0:
+                self.state_ambient_temp = ambient_temp
 
-        self._update_heater_power()
+        # Simulate, with the power the heater really received
 
-        # Amount of power needed to reach the target temperature in the desired time
-
-        heating_power = (
-            (target_temp - self.state_block_temp)
-            * self.const_block_heat_capacity
-            / self.const_target_reach_time
+        expected_heating = (
+            self._applied_duty(read_time - dt, read_time)
+            * self.full_heater_power
         )
-        # Losses (+ = lost from block, - = gained to block)
         block_ambient_delta = self.state_block_temp - self.state_ambient_temp
-        loss_ambient = block_ambient_delta * ambient_transfer
         block_filament_delta = self.state_block_temp - self.filament_temp(
             read_time, self.state_ambient_temp
         )
-        loss_filament = (
-            block_filament_delta
-            * extrude_speed_next
+        expected_loss = (
+            block_ambient_delta * ambient_transfer
+            + block_filament_delta
+            * extrude_speed_prev
             * self.const_filament_cross_section_heat_capacity
+            + self.state_disturbance
+        )
+        self.state_block_temp += (
+            (expected_heating - expected_loss)
+            * dt
+            / self.const_block_heat_capacity
+        )
+        self.state_sensor_temp += (
+            (self.state_block_temp - self.state_sensor_temp)
+            * self.const_sensor_responsiveness
+            * dt
         )
 
-        if target_temp != 0.0:
-            # The required power is the desired heating power + compensation for all the losses
-            power = max(
-                0.0,
-                min(
-                    self.heater_max_power,
-                    heating_power + loss_ambient + loss_filament,
-                ),
-            )
+        # Correct
+
+        gain_block, gain_sensor, gain_disturbance = self.observer_gains
+        error = temp - self.state_sensor_temp
+        self.state_block_temp += gain_block * error
+        self.state_sensor_temp += gain_sensor * error
+
+        if 0.0 < self.last_power < self.heater_max_power:
+            self.clipped_time = 0.0
         else:
-            power = 0
-
-        duty = power / self.full_heater_power
-
-        # logging.info(
-        #     "mpc: [%.3f/%.3f] %.2f => %.2f / %.2f / %.2f = %.2f[%.2f+%.2f+%.2f] / %.2f, dT %.2f, E %.2f=>%.2f",
-        #     dt,
-        #     smoothing,
-        #     temp,
-        #     self.state_block_temp,
-        #     self.state_sensor_temp,
-        #     self.state_ambient_temp,
-        #     power,
-        #     heating_power,
-        #     loss_ambient,
-        #     loss_filament,
-        #     duty,
-        #     adjustment_dT,
-        #     extrude_speed_prev,
-        #     extrude_speed_next,
-        # )
-
-        self.last_power = power
-        self.last_loss_ambient = loss_ambient
-        self.last_loss_filament = loss_filament
-        self.last_temp_time = read_time
-        self.heater.set_pwm(read_time, duty)
+            self.clipped_time += dt
+        if target_temp == 0.0:
+            # Nothing useful can be learned from a heater that is off
+            self.state_disturbance = 0.0
+        elif self.clipped_time <= OBSERVER_CLIPPED_TIME:
+            limit = self.full_heater_power
+            self.state_disturbance = max(
+                -limit,
+                min(limit, self.state_disturbance + gain_disturbance * error),
+            )
 
     def filament_temp(self, read_time, ambient_temp):
         src = self.filament_temp_src
@@ -511,6 +715,7 @@ class ControlMPC:
             "temp_sensor": self.state_sensor_temp,
             "temp_ambient": self.state_ambient_temp,
             "power": self.last_power,
+            "disturbance": self.state_disturbance,
             "loss_ambient": self.last_loss_ambient,
             "loss_filament": self.last_loss_filament,
             "filament_temp": self.filament_temp_src,
@@ -771,6 +976,9 @@ class MpcCalibrate:
                 "sensor_responsiveness",
             ]:
                 profile[key] = fit[key]
+            # The measurements below reset the ambient temperature estimate
+            # between fan speeds, which only the ambient estimator uses.
+            profile["disturbance_estimator"] = ESTIMATOR_AMBIENT
             new_control = ControlMPC(profile, self.heater, False, False)
             # Bring the model up to date with what was recorded since
             samples = list(control.log)
