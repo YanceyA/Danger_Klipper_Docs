@@ -1,13 +1,16 @@
 """MPC controller and calibration tests against a simulated hotend."""
 
+import configparser
 import math
 from types import SimpleNamespace
 
 import pytest
 from klippy_testing.mpc_sim import FakeFan, Plant, Sim
 
+from klippy import configfile
 from klippy.extras import (
     control_mpc,
+    heaters,
     mpc_ambient_temperature,
     mpc_block_temperature,
 )
@@ -38,12 +41,52 @@ def test_fan_lookup_uses_requested_value_not_scaled_speed():
     # with max_power < 1 must not be looked up by its scaled speed.
     fan = FakeFan(max_power=0.5)
     sim = Sim(fan=fan)
-    control = hot_control(sim, fan_ambient_transfer=[0.10, 0.20, 0.30])
+    control = hot_control(
+        sim, fan_ambient_transfer=[(0.0, 0.10), (0.5, 0.20), (1.0, 0.30)]
+    )
     fan.set_speed(1.0)
     control.temperature_update(sim.time + 0.3, 200.0, 200.0)
     assert control.last_loss_ambient == pytest.approx(
         0.30 * (control.state_block_temp - control.state_ambient_temp)
     )
+
+
+def test_fan_table_parsing():
+    parse = control_mpc.parse_fan_ambient_transfer
+    assert parse([]) == []
+    # Plain values are evenly spaced from 0% to 100% fan
+    assert parse(["0.1", "0.2", "0.3"]) == [(0.0, 0.1), (0.5, 0.2), (1.0, 0.3)]
+    assert parse(["1:0.3", " 0:0.1", "0.2:0.15 "]) == [
+        (0.0, 0.1),
+        (0.2, 0.15),
+        (1.0, 0.3),
+    ]
+    for bad in (["0:0.1", "0.2"], ["0:0.1", "1.5:0.2"], ["0:0.1", "0:0.2"]):
+        with pytest.raises(ValueError):
+            parse(bad)
+
+
+def test_fan_table_formatting_round_trips():
+    parse = control_mpc.parse_fan_ambient_transfer
+    fmt = control_mpc.format_fan_ambient_transfer
+    even = [(0.0, 0.1), (0.5, 0.2), (1.0, 0.3)]
+    assert fmt(even) == "0.1, 0.2, 0.3"
+    uneven = [(0.0, 0.1), (0.2, 0.15), (1.0, 0.3)]
+    assert fmt(uneven) == "0:0.1, 0.2:0.15, 1:0.3"
+    for table in (even, uneven, [(0.0, 0.1)], []):
+        assert parse(fmt(table).split(",")) == table
+
+
+def test_fan_table_interpolation():
+    table = [(0.0, 0.10), (0.2, 0.12), (1.0, 0.20)]
+    lookup = control_mpc.interpolate_fan_ambient_transfer
+    assert lookup(table, 0.0) == 0.10
+    assert lookup(table, 0.1) == pytest.approx(0.11)
+    assert lookup(table, 0.6) == pytest.approx(0.16)
+    assert lookup(table, 1.0) == 0.20
+    # Outside the measured range the nearest measurement is used
+    assert lookup(table[1:], 0.0) == 0.12
+    assert lookup(table[:2], 1.0) == 0.12
 
 
 ######################################################################
@@ -228,3 +271,119 @@ def test_calibration_across_hotends(plant):
     fan_table = [float(v) for v in values["fan_ambient_transfer"].split(",")]
     assert fan_table[0] == pytest.approx(0.10, rel=0.06)
     assert fan_table[-1] == pytest.approx(0.20, rel=0.06)
+
+
+######################################################################
+# Calibration: fan sweep
+######################################################################
+
+
+def fan_calibration(plant, params=None):
+    fan = FakeFan()
+    sim = Sim(plant=plant, fan=fan)
+    values, gcmd = sim.calibrate(params)
+    table = control_mpc.parse_fan_ambient_transfer(
+        values["fan_ambient_transfer"].split(",")
+    )
+    return sim, fan, table, gcmd
+
+
+def coldest_while_holding(sim, target=200.0):
+    reached = next(i for i, row in enumerate(sim.log) if row[1] >= target)
+    return min(row[1] for row in sim.log[reached:])
+
+
+def test_fan_sweep_measures_requested_speeds():
+    plant = Plant(h0=0.10, h_fan=0.10)
+    sim, fan, table, _ = fan_calibration(plant, {"FAN_SPEEDS": "0.1,0.3,1"})
+    assert [speed for speed, _ in table] == [0.0, 0.1, 0.3, 1.0]
+    for speed, transfer in table:
+        assert transfer == pytest.approx(plant.transfer(speed), rel=0.05)
+    assert fan.value == 0.0
+
+
+def test_fan_sweep_is_fast_and_holds_temperature():
+    # Measured fan speeds are fed forward, so later steps barely disturb
+    # the temperature and no long wait is needed between them.
+    sim, _, table, _ = fan_calibration(Plant(), {"FAN_BREAKPOINTS": 7})
+    assert len(table) == 7
+    assert sim.time < 420.0
+    assert coldest_while_holding(sim) > 200.0 - 3.0
+
+
+def test_fan_sweep_approaches_a_large_step_gradually():
+    # One step to a strong fan cools the block faster than a model that
+    # knows nothing about the fan can react; it is retried via 50%.
+    plant = Plant(h0=0.10, h_fan=0.16)
+    sim, fan, table, gcmd = fan_calibration(plant, {"FAN_BREAKPOINTS": 2})
+    assert [speed for speed, _ in table] == [0.0, 0.5, 1.0]
+    assert table[-1][1] == pytest.approx(0.26, rel=0.05)
+    assert any("measuring 50% first" in msg for msg in gcmd.responses)
+    limit = 200.0 - control_mpc.FAN_SWEEP_MAX_SAG
+    assert coldest_while_holding(sim) > limit - 1.0
+
+
+def test_fan_sweep_stops_at_the_heater_limit():
+    # At full fan this block loses more heat than the heater can supply.
+    # The sweep must finish with what could be measured, not hang.
+    plant = Plant(heater_w=40.0, block_c=14.0, h0=0.10, h_fan=0.20)
+    sim, fan, table, gcmd = fan_calibration(plant)
+    speeds = [speed for speed, _ in table]
+    assert speeds[0] == 0.0 and 0.0 < speeds[-1] < 1.0
+    for speed, transfer in table:
+        assert transfer == pytest.approx(plant.transfer(speed), rel=0.06)
+    assert any("not testing" in msg for msg in gcmd.responses)
+    assert fan.value == 0.0
+    limit = 200.0 - control_mpc.FAN_SWEEP_MAX_SAG
+    assert coldest_while_holding(sim) > limit - 1.0
+
+
+def test_calibration_without_a_fan():
+    sim = Sim(plant=Plant())
+    values, _ = sim.calibrate()
+    assert values["fan_ambient_transfer"] == ""
+    assert float(values["ambient_transfer"]) == pytest.approx(0.10, rel=0.05)
+
+
+######################################################################
+# Configuration
+######################################################################
+
+
+def mpc_profile_from_config(**options):
+    fileconfig = configparser.RawConfigParser()
+    fileconfig.add_section("extruder")
+    for option, value in {
+        "control": "mpc",
+        "heater_power": "50",
+        **options,
+    }.items():
+        fileconfig.set("extruder", option, value)
+    printer = SimpleNamespace(lookup_object=lambda name, default=None: default)
+    config = configfile.ConfigWrapper(printer, fileconfig, {}, "extruder")
+    manager = heaters.Heater.ProfileManager.__new__(
+        heaters.Heater.ProfileManager
+    )
+    manager.outer_instance = SimpleNamespace(config=config)
+    manager.profiles = {}
+    return manager._init_profile(config, "default")
+
+
+def test_config_fan_table_formats():
+    profile = mpc_profile_from_config(fan_ambient_transfer="0.1, 0.2, 0.3")
+    assert profile["fan_ambient_transfer"] == [
+        (0.0, 0.1),
+        (0.5, 0.2),
+        (1.0, 0.3),
+    ]
+    profile = mpc_profile_from_config(
+        fan_ambient_transfer="0:0.1, 0.2:0.15, 1:0.3"
+    )
+    assert profile["fan_ambient_transfer"] == [
+        (0.0, 0.1),
+        (0.2, 0.15),
+        (1.0, 0.3),
+    ]
+    assert mpc_profile_from_config()["fan_ambient_transfer"] == []
+    with pytest.raises(configfile.error, match="fan_ambient_transfer"):
+        mpc_profile_from_config(fan_ambient_transfer="0:0.1, 2:0.3")

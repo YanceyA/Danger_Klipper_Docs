@@ -14,6 +14,7 @@ from .control_mpc import (
     FILAMENT_TEMP_SRC_FIXED,
     FILAMENT_TEMP_SRC_SENSOR,
     ControlMPC,
+    parse_fan_ambient_transfer,
 )
 
 ######################################################################
@@ -572,9 +573,16 @@ class Heater:
                     fan = fan_obj.fan
                 temp_profile["cooling_fan"] = fan
 
-                temp_profile["fan_ambient_transfer"] = (
-                    config_section.getfloatlist("fan_ambient_transfer", [])
-                )
+                try:
+                    temp_profile["fan_ambient_transfer"] = (
+                        parse_fan_ambient_transfer(
+                            config_section.getlist("fan_ambient_transfer", [])
+                        )
+                    )
+                except ValueError as e:
+                    raise config_section.error(
+                        f"Unable to parse option 'fan_ambient_transfer' in section '{config_section.get_name()}': {e}"
+                    )
             elif control == "pid" or control == "pid_v":
                 for key, (type, placeholder) in PID_PROFILE_OPTIONS.items():
                     can_be_none = (

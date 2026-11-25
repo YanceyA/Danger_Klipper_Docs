@@ -10,10 +10,76 @@ PIN_MIN_TIME = 0.100
 HEATUP_COAST_TIME = 10.0
 FIT_MAX_ITERATIONS = 400
 FIT_MIN_SAMPLES = 20
+# Holding the temperature before measuring the heat loss: the temperature
+# has to stay within HOLD_TOLERANCE for HOLD_STABLE_TIME.
+HOLD_TOLERANCE = 0.5
+HOLD_STABLE_TIME = 20.0
+HOLD_MIN_TIME = 30.0
+HOLD_TIMEOUT = 180.0
+# The fan sweep backs off when the heater can no longer hold the
+# temperature. A fan step that failed is retried in smaller steps, down to
+# FAN_SWEEP_MIN_STEP.
+FAN_SWEEP_MAX_SAG = 8.0
+FAN_SWEEP_MIN_STEP = 0.2
+# and it ends once the heat loss gets this close to the maximum heater power
+FAN_SWEEP_MAX_POWER = 0.95
 
 FILAMENT_TEMP_SRC_AMBIENT = "ambient"
 FILAMENT_TEMP_SRC_FIXED = "fixed"
 FILAMENT_TEMP_SRC_SENSOR = "sensor"
+
+
+def parse_fan_ambient_transfer(entries):
+    """Parse a fan heat-loss table into a list of (fan speed, W/K).
+
+    Entries are either plain values, evenly spaced from 0% to 100% fan, or
+    "speed:value" pairs with the fan speed given as 0..1.
+    """
+    entries = [str(entry).strip() for entry in entries]
+    entries = [entry for entry in entries if entry]
+    if not entries:
+        return []
+    if not any(":" in entry for entry in entries):
+        values = [float(entry) for entry in entries]
+        last = max(1, len(values) - 1)
+        return [(idx / last, value) for idx, value in enumerate(values)]
+    table = []
+    for entry in entries:
+        speed, sep, value = entry.partition(":")
+        if not sep:
+            raise ValueError("cannot mix plain values and speed:value pairs")
+        speed, value = float(speed), float(value)
+        if speed < 0.0 or speed > 1.0:
+            raise ValueError("fan speeds must be between 0 and 1")
+        table.append((speed, value))
+    table.sort()
+    for idx in range(1, len(table)):
+        if table[idx][0] == table[idx - 1][0]:
+            raise ValueError("duplicate fan speed %g" % (table[idx][0],))
+    return table
+
+
+def format_fan_ambient_transfer(table):
+    count = len(table)
+    if count > 1 and all(
+        abs(speed - idx / (count - 1)) < 1e-6
+        for idx, (speed, _) in enumerate(table)
+    ):
+        # Evenly spaced from 0% to 100%: the plain list is sufficient
+        return ", ".join(f"{value:.6g}" for _, value in table)
+    return ", ".join(f"{speed:.4g}:{value:.6g}" for speed, value in table)
+
+
+def interpolate_fan_ambient_transfer(table, fan_speed):
+    if fan_speed <= table[0][0]:
+        return table[0][1]
+    for idx in range(1, len(table)):
+        speed, value = table[idx]
+        if fan_speed <= speed:
+            prev_speed, prev_value = table[idx - 1]
+            frac = (fan_speed - prev_speed) / (speed - prev_speed)
+            return prev_value + (value - prev_value) * frac
+    return table[-1][1]
 
 
 class ControlMPC:
@@ -84,14 +150,14 @@ class ControlMPC:
 
         if gcmd.get("FAN_AMBIENT_TRANSFER", None):
             try:
-                self.const_fan_ambient_transfer = [
-                    float(v)
-                    for v in gcmd.get("FAN_AMBIENT_TRANSFER").split(",")
-                ]
+                self.const_fan_ambient_transfer = parse_fan_ambient_transfer(
+                    gcmd.get("FAN_AMBIENT_TRANSFER").split(",")
+                )
             except ValueError:
                 raise gcmd.error(
                     f"Error on '{gcmd._commandline}': unable to parse FAN_AMBIENT_TRANSFER\n"
                     "Must be a comma-separated list of values ('0.05,0.07,0.08')"
+                    " or of fan speed:value pairs ('0:0.05,0.3:0.07,1:0.08')"
                 )
 
         temp = gcmd.get("FILAMENT_TEMP", None)
@@ -214,14 +280,9 @@ class ControlMPC:
             fan_speed = max(
                 0.0, min(1.0, self.cooling_fan.get_status(read_time)["value"])
             )
-            fan_break = fan_speed * (len(self.const_fan_ambient_transfer) - 1)
-            below = self.const_fan_ambient_transfer[math.floor(fan_break)]
-            above = self.const_fan_ambient_transfer[math.ceil(fan_break)]
-            if below != above:
-                frac = fan_break % 1.0
-                ambient_transfer = below * (1 - frac) + frac * above
-            else:
-                ambient_transfer = below
+            ambient_transfer = interpolate_fan_ambient_transfer(
+                self.const_fan_ambient_transfer, fan_speed
+            )
 
         # Simulate
 
@@ -591,13 +652,9 @@ class MpcCalibrate:
             self._run(gcmd, calibration)
 
     def _run(self, gcmd, calibration):
-        ambient_max_measure_time = gcmd.get_float(
-            "AMBIENT_MAX_MEASURE_TIME", 20.0, above=0.0
-        )
-        ambient_measure_sample_time = gcmd.get_float(
-            "AMBIENT_MEASURE_SAMPLE_TIME", 5.0, below=ambient_max_measure_time
-        )
-        fan_breakpoints = gcmd.get_int("FAN_BREAKPOINTS", 3, minval=2)
+        measure_time = gcmd.get_float("MEASURE_TIME", 15.0, minval=2.0)
+        fan_settle_time = gcmd.get_float("FAN_SETTLE_TIME", 10.0, minval=0.0)
+        fan_speeds = self.get_fan_speeds(gcmd)
         default_target_temp = (
             90.0 if self.heater.get_name() == "heater_bed" else 200.0
         )
@@ -611,6 +668,9 @@ class MpcCalibrate:
         try:
             ambient_temp = self.await_ambient(gcmd, control, threshold_temp)
             heater_power = self.orig_control.const_heater_power
+            if self.orig_control.cooling_fan is not None:
+                # A running fan would end up in the fitted model
+                self.orig_control.cooling_fan.set_speed(0.0)
             self.heatup_test(gcmd, target_temp, control)
             # Fit the whole heat-up record. The heater stays off (and is
             # still being recorded) while this runs.
@@ -648,18 +708,16 @@ class MpcCalibrate:
 
             transfer_res = self.transfer_test(
                 gcmd,
-                ambient_max_measure_time,
-                ambient_measure_sample_time,
-                fan_breakpoints,
+                new_control,
                 target_temp,
+                ambient_temp,
+                fan_speeds,
+                fan_settle_time,
+                measure_time,
             )
-            target_ambient_temp = transfer_res["target_temp"] - ambient_temp
-            ambient_transfer = transfer_res["base_power"] / target_ambient_temp
-            fan_ambient_transfer = ", ".join(
-                [
-                    f"{power / target_ambient_temp:.6g}"
-                    for (_speed, power) in transfer_res["fan_powers"]
-                ]
+            ambient_transfer = transfer_res["ambient_transfer"]
+            fan_ambient_transfer = format_fan_ambient_transfer(
+                transfer_res["fan_ambient_transfer"]
             )
             # The heat loss measured while holding the temperature is more
             # accurate than what the heat-up alone can tell; refit the
@@ -706,40 +764,53 @@ class MpcCalibrate:
             calibration.set_control(old_control)
             self.heater.alter_target(0.0)
 
-    def wait_stable(self, gcmd, cycles=5):
-        """
-        We wait for the extruder to cycle x amount of times above and below the target
-        doing this should ensure the temperature is stable enough to give a good result
-        as a fallback if it stays within 0.1 degree for ~30 seconds it is also accepted
-        """
+    def get_fan_speeds(self, gcmd):
+        """Fan speeds (0..1) to measure, always starting with the fan off"""
+        speeds = gcmd.get("FAN_SPEEDS", None)
+        if speeds is None:
+            breakpoints = gcmd.get_int("FAN_BREAKPOINTS", 3, minval=2)
+            return [idx / (breakpoints - 1) for idx in range(breakpoints)]
+        try:
+            speeds = {float(speed) for speed in speeds.split(",")}
+        except ValueError:
+            raise gcmd.error(
+                "Unable to parse FAN_SPEEDS, it must be a comma-separated"
+                " list of fan speeds ('0.1,0.2,0.3,0.5,1')"
+            )
+        if any(speed < 0.0 or speed > 1.0 for speed in speeds):
+            raise gcmd.error("FAN_SPEEDS must be between 0 and 1")
+        return sorted(speeds | {0.0})
 
-        below_target = True
-        above_target = 0
-        on_target = 0
-        starttime = self.printer.reactor.monotonic()
+    def wait_stable(self, gcmd, target_temp):
+        """
+        Wait until the temperature has stayed close to the target for a
+        while. Returns False if that did not happen within HOLD_TIMEOUT; the
+        heat loss measurement corrects for a temperature that still drifts.
+        """
+        start = [None]
+        in_range_since = [None]
+        stable = [False]
 
         def process(eventtime):
-            nonlocal below_target, above_target, on_target
-            temp, target = self.heater.get_temp(eventtime)
-            if below_target and temp > target + 0.015:
-                above_target += 1
-                below_target = False
-            elif not below_target and temp < target - 0.015:
-                below_target = True
+            if start[0] is None:
+                start[0] = eventtime
+            temp, _ = self.heater.get_temp(eventtime)
+            if abs(temp - target_temp) > HOLD_TOLERANCE:
+                in_range_since[0] = None
+            elif in_range_since[0] is None:
+                in_range_since[0] = eventtime
+            elapsed = eventtime - start[0]
             if (
-                above_target >= cycles
-                and (self.printer.reactor.monotonic() - starttime) > 30.0
+                in_range_since[0] is not None
+                and eventtime - in_range_since[0] >= HOLD_STABLE_TIME
+                and elapsed >= HOLD_MIN_TIME
             ):
+                stable[0] = True
                 return False
-            if above_target > 0 and abs(target - temp) < 0.1:
-                on_target += 1
-            else:
-                on_target = 0
-            if on_target >= 150:  # in case the heating is super consistent
-                return False
-            return True
+            return elapsed < HOLD_TIMEOUT
 
-        gcmd.wait_while(process, True, 0.2)
+        gcmd.wait_while(process, True, 0.5)
+        return stable[0]
 
     def wait_settle(self, max_rate, gcmd):
         last_temp = None
@@ -836,83 +907,154 @@ class MpcCalibrate:
     def transfer_test(
         self,
         gcmd,
-        ambient_max_measure_time,
-        ambient_measure_sample_time,
-        fan_breakpoints,
+        control,
         target_temp,
+        ambient_temp,
+        fan_speeds,
+        fan_settle_time,
+        measure_time,
     ):
+        fan = self.orig_control.cooling_fan
         self.heater.set_temp(target_temp)
         gcmd.respond_info(
             "Performing ambient transfer tests, target is %.1f degrees"
             % (target_temp,)
         )
 
-        self.wait_stable(gcmd, 5)
+        reactor = self.heater.reactor
+        min_temp = target_temp - FAN_SWEEP_MAX_SAG
 
-        fan = self.orig_control.cooling_fan
+        def holding(eventtime):
+            temp, _ = self.heater.get_temp(eventtime)
+            return temp >= min_temp
 
-        fan_powers = []
-        if fan is None:
-            power_base = self.measure_power(
-                ambient_max_measure_time, ambient_measure_sample_time, gcmd
+        def measure(speed, min_temp=None):
+            result = self.measure_loss(gcmd, control, measure_time, min_temp)
+            if result is None:
+                return False
+            power, temp = result
+            last_power[0] = power
+            transfer = power / (temp - ambient_temp)
+            gcmd.respond_info(
+                f"{speed * 100.0:.0f}% fan: {power:.2f} W, {transfer:.4f} W/K"
             )
-            gcmd.respond_info(f"Average stable power: {power_base} W")
-        else:
-            try:
-                for idx in range(0, fan_breakpoints):
-                    speed = idx / (fan_breakpoints - 1)
-                    curtime = self.heater.reactor.monotonic()
-                    fan.set_speed(speed)
-                    gcmd.respond_info("Waiting for temperature to stabilize")
-                    self.wait_stable(gcmd, 3)
-                    gcmd.respond_info(
-                        f"Temperature stable, measuring power usage with {speed * 100.0:.0f}% fan speed"
-                    )
-                    power = self.measure_power(
-                        ambient_max_measure_time,
-                        ambient_measure_sample_time,
-                        gcmd,
-                    )
-                    gcmd.respond_info(
-                        f"{speed * 100.0:.0f}% fan average power: {power:.2f} W"
-                    )
-                    fan_powers.append((speed, power))
-            finally:
+            table.append((speed, transfer))
+            # Let the controller use what has been measured so far. Without
+            # this every fan step is a disturbance the model knows nothing
+            # about, which it can only absorb slowly through its ambient
+            # temperature estimate.
+            control.const_ambient_transfer = table[0][1]
+            control.const_fan_ambient_transfer = list(table)
+            control.state_ambient_temp = ambient_temp
+            return True
+
+        table = []
+        last_power = [0.0]
+        power_limit = FAN_SWEEP_MAX_POWER * control.heater_max_power
+        try:
+            if fan is not None:
                 fan.set_speed(0.0)
-            power_base = fan_powers[0][1]
+            gcmd.respond_info("Waiting for temperature to stabilize")
+            if not self.wait_stable(gcmd, target_temp):
+                gcmd.respond_info(
+                    "Temperature is still settling, measuring anyway"
+                )
+            measure(0.0)
+            pending = [speed for speed in fan_speeds if speed > 0.0]
+            done = 0.0  # highest fan speed measured so far
+            while fan is not None and pending:
+                speed = pending.pop(0)
+                fan.set_speed(speed)
+                settled = reactor.monotonic() + fan_settle_time
+                gcmd.wait_while(
+                    lambda eventtime: (
+                        eventtime < settled and holding(eventtime)
+                    ),
+                    True,
+                    0.5,
+                )
+                if holding(reactor.monotonic()) and measure(speed, min_temp):
+                    done = speed
+                    if last_power[0] < power_limit:
+                        continue
+                    gcmd.respond_info(
+                        f"The heater is at its limit with {speed * 100.0:.0f}%"
+                        " fan, not testing higher fan speeds"
+                    )
+                    break
+                # Back off before the temperature drops far enough for
+                # verify_heater to step in.
+                fan.set_speed(0.0)
+                if speed - done <= FAN_SWEEP_MIN_STEP + 1e-6:
+                    gcmd.respond_info(
+                        f"The heater cannot hold {target_temp:.0f} degrees"
+                        f" with {speed * 100.0:.0f}% fan, not testing"
+                        " this or higher fan speeds"
+                    )
+                    break
+                # The step was too large for a fan the model knows nothing
+                # about yet; approach it through an intermediate speed.
+                middle = round((done + speed) / 2.0, 3)
+                gcmd.respond_info(
+                    f"Temperature dropped too far with {speed * 100.0:.0f}%"
+                    f" fan, measuring {middle * 100.0:.0f}% first"
+                )
+                pending = [middle, speed] + pending
+                if not self.wait_stable(gcmd, target_temp):
+                    gcmd.respond_info(
+                        "Temperature did not recover, not testing higher"
+                        " fan speeds"
+                    )
+                    break
+        finally:
+            if fan is not None:
+                fan.set_speed(0.0)
 
         return {
-            "target_temp": target_temp,
-            "base_power": power_base,
-            "fan_powers": fan_powers,
+            "ambient_transfer": table[0][1],
+            "fan_ambient_transfer": table if fan is not None else [],
         }
 
-    def measure_power(self, max_time, sample_time, gcmd):
-        samples = []
-        time = [0]
-        last_time = [None]
+    def measure_loss(self, gcmd, control, duration, min_temp=None):
+        """
+        Measure the heat lost by the block over `duration` seconds as the
+        energy put in by the heater minus the energy that went into changing
+        the (modelled) block temperature. Unlike averaging the power at a
+        perfectly steady temperature this does not need the temperature to
+        settle first. Returns the lost power and the average temperature, or
+        None if the temperature fell below min_temp.
+        """
+        heater_power = control.const_heater_power
+        block_temps = [None, None]  # at the first and the last poll
+        last = [None, 0.0]  # time and duty at the previous poll
+        totals = [0.0, 0.0, 0.0]  # time, energy, temp*time
+        too_cold = [False]
 
         def process(eventtime):
-            dt = eventtime - (
-                last_time[0] if last_time[0] is not None else eventtime
-            )
-            last_time[0] = eventtime
-            status = self.heater.get_status(eventtime)
-            samples.append((dt, status["control_stats"]["power"] * dt))
-            time[0] += dt
-            return time[0] < max_time
+            temp, _ = self.heater.get_temp(eventtime)
+            if min_temp is not None and temp < min_temp:
+                too_cold[0] = True
+                return False
+            duty = self.heater.get_status(eventtime)["power"]
+            block_temps[1] = control.state_block_temp
+            if last[0] is None:
+                block_temps[0] = block_temps[1]
+            else:
+                dt = eventtime - last[0]
+                totals[0] += dt
+                totals[1] += last[1] * heater_power * dt
+                totals[2] += temp * dt
+            last[0], last[1] = eventtime, duty
+            return totals[0] < duration
 
-        gcmd.wait_while(process)
-
-        total_energy = 0
-        total_time = 0
-        for dt, energy in reversed(samples):
-            total_energy += energy
-            total_time += dt
-            if total_time > sample_time:
-                break
-
-        return total_energy / total_time
+        gcmd.wait_while(process, True, self.heater.get_pwm_delay())
+        if too_cold[0]:
+            return None
+        elapsed = totals[0]
+        stored = control.const_block_heat_capacity * (
+            block_temps[1] - block_temps[0]
+        )
+        return (totals[1] - stored) / elapsed, totals[2] / elapsed
 
 
 class TuningControl:

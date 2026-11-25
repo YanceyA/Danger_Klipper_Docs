@@ -303,6 +303,7 @@ def calibration_heater(dispatch):
     heater.control = SimpleNamespace(
         ambient_sensor=SimpleNamespace(get_temp=lambda eventtime: (20, 0)),
         const_heater_power=50.0,
+        cooling_fan=None,
         temperature_update=lambda time, temp, target: heater.set_pwm(time, 0.0),
     )
     return heater, pwm

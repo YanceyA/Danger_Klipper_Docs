@@ -176,12 +176,12 @@ The MPC default calibration routine takes the following steps:
 
 > 1. Cool to ambient: The calibration routine needs to know the approximate ambient temperature and waits until the hotend temperature stabilises and stops decreasing relative to ambient.
 > 2. Heat past the target at full power, then switch the heater off for a few seconds: The whole temperature record, including the way the sensor overshoots and turns around once the heater is off, is fitted to the MPC model. This determines the heat capacity of the heater block and the responsiveness of the sensor.
-> 3. Hold temperature while measuring ambient heat-loss: At this point enough is known for the MPC algorithm to engage. The calibration routine holds the target temperature while ambient heat-loss is measured without and with the fan engaged (if a `cooling_fan` is specified). The model from step 2 is then refined using the measured heat-loss.
+> 3. Hold temperature while measuring ambient heat-loss: At this point enough is known for the MPC algorithm to engage. The calibration routine holds the target temperature while ambient heat-loss is measured without the fan and, if a `cooling_fan` is specified, at each requested fan speed (see [Fan Measurement](#fan-measurement)). The model from step 2 is then refined using the measured heat-loss.
 > 4. The MPC calibration routine creates the appropriate model constants. At this time the model parameters are temporary and not yet saved to the printer configuration.  
 
 The MPC calibration routine must be run for each heater, to be controlled by MPC, in order to determine the model parameters. For an MPC calibration to be successful an extruder must be able to reach 200C. Calibration is performed with the following G-code command.
 
-`MPC_CALIBRATE HEATER=<heater> [TARGET=<temperature>] [FAN_BREAKPOINTS=<value>]`  
+`MPC_CALIBRATE HEATER=<heater> [TARGET=<temperature>] [FAN_BREAKPOINTS=<value>] [FAN_SPEEDS=<list>] [FAN_SETTLE_TIME=<seconds>] [MEASURE_TIME=<seconds>]`  
 
 - `HEATER=<heater>`:  
   The extruder heater to be calibrated.  
@@ -192,15 +192,43 @@ The MPC calibration routine must be run for each heater, to be controlled by MPC
   
 - `FAN_BREAKPOINTS=<value>`:  
   _Default Value: 3_  
-  Sets the number of fan setpoints to test during calibration. An arbitrary number of breakpoints can be specified e.g. 7 breakpoints would result in (0, 16%, 33%, 50%, 66%, 83%, 100%) fan speeds.
-  It is recommended to use a number that will capture one or more test points below the lowest level of fan normally used. For example, if 20% fan is the lowest commonly used speed, using 11 break points is recommended to test 10% and 20% fan at the low range.  
+  Sets the number of evenly spaced fan setpoints to test during calibration. An arbitrary number of breakpoints can be specified e.g. 7 breakpoints would result in (0, 16%, 33%, 50%, 66%, 83%, 100%) fan speeds.  
+
+- `FAN_SPEEDS=<list>`:  
+  _Default Value: not set_  
+  A comma-separated list of the fan speeds (0 to 1) to test instead of evenly spaced breakpoints, e.g. `FAN_SPEEDS=0.1,0.2,0.3,0.5,1`. The measurement without fan is always included. Most fans change the heat loss the most at the low end of their range, so it is recommended to test the lowest fan speed normally used, one or two speeds around it, and 100%.  
+
+- `FAN_SETTLE_TIME=<seconds>`:  
+  _Default Value: 10_  
+  The time to wait after changing the fan speed before the heat loss is measured.  
+
+- `MEASURE_TIME=<seconds>`:  
+  _Default Value: 15_  
+  The time over which each heat loss measurement is taken.  
   
 Default calibration of the hotend with seven fan breakpoints:  
 ```
 MPC_CALIBRATE HEATER=extruder FAN_BREAKPOINTS=7
 ```
+
+Calibration with fan speeds concentrated at the low end:  
+```
+MPC_CALIBRATE HEATER=extruder FAN_SPEEDS=0.1,0.2,0.3,0.5,0.75,1
+```
+
+## Fan Measurement
+
+The part cooling fan is switched off for the heat-up and then stepped through the requested speeds while MPC holds the target temperature. Each fan speed takes about 25 seconds with the default settings.
+
+The heat loss at each speed is measured as the energy supplied by the heater minus the energy that went into changing the block temperature, so the temperature does not have to be perfectly steady. Each result is handed to the controller right away. The controller therefore already compensates for the fan speeds measured so far and only has to cope with the additional loss of the next step.
+
+The calibration does not get stuck when the fan is stronger than the heater:
+
+- If the temperature drops more than 8°C below the target the fan is switched off, the temperature is allowed to recover and the fan speed is approached again through an intermediate speed. The intermediate speed is added to the result.
+- If the heater needs more than 95% of its power to hold the temperature, or the temperature cannot be held even after approaching in small steps, the remaining higher fan speeds are not tested. The heat loss measured at the highest tested fan speed is then used for all higher fan speeds.
+
 > [!NOTE]
-> Ensure that the part cooling fan is off before starting calibration.  
+> The heat loss caused by the fan depends on where the air stream goes. If the fan compensation appears to be off while printing, run the calibration with the nozzle a few millimeters above the bed, where the air is deflected in the same way as during a print.
 
 After successful  calibration the method will generate the key model parameters into the log for future reference.  
 
@@ -221,7 +249,13 @@ A `SAVE_CONFIG` command is then required to commit these calibrated model parame
 #*# block_heat_capacity = 22.3110
 #*# sensor_responsiveness = 0.0998635
 #*# ambient_transfer = 0.155082
-#*# fan_ambient_transfer=0.155082, 0.20156, 0.216441
+#*# fan_ambient_transfer = 0.155082, 0.20156, 0.216441
+```
+
+When the tested fan speeds are not evenly spaced from 0% to 100% each value is stored together with its fan speed:
+
+```
+#*# fan_ambient_transfer = 0:0.155082, 0.1:0.157341, 0.2:0.171932, 0.3:0.184502, 0.5:0.20156, 1:0.216441
 ```
 
 > [!NOTE]
@@ -239,7 +273,7 @@ These model parameters are not suitable for pre-configuration or are not explici
   A single constant representing the coefficient of heat transfer from heater block to sensor and heat capacity of the sensor in (K/s/K). The inverse is the time constant of the sensor in seconds: with a value of 0.25 the sensor needs about 4 seconds to follow most of a change in block temperature.  
   
 - `fan_ambient_transfer:`  
-  Heat transfer from heater block to ambient in with fan enabled in (W/K).  
+  Heat transfer from heater block to ambient with the fan enabled in (W/K). Either a list of values for evenly spaced fan speeds from 0% to 100%, or a list of `fan speed:value` pairs with the fan speed given as 0 to 1. Values between the listed fan speeds are interpolated.  
   
 # Support Macros
 
@@ -379,7 +413,7 @@ heater_power: 400
 
 The bed should be able to reach at least 90C to perform calibration with the following G-code. 
 
-`MPC_CALIBRATE HEATER=<heater> [TARGET=<temperature>] [FAN_BREAKPOINTS=<value>]`  
+`MPC_CALIBRATE HEATER=<heater> [TARGET=<temperature>] [FAN_BREAKPOINTS=<value>] [FAN_SPEEDS=<list>]`  
 
 - `HEATER=<heater>`:  
   The bed heater to be calibrated.  
@@ -404,6 +438,8 @@ These calibrated model parameters need to be saved to the _SAVE_CONFIG_ block ma
 Similar to [`SET_HEATER_PID`](G-Codes.md#set_heater_pid), you can update your MPC calibration profile at runtime.
 
 `MPC_SET HEATER=<heater_name> [BLOCK_HEAT_CAPACITY=0.0] [SENSOR_RESPONSIVENESS=0.0] [AMBIENT_TRANSFER=0.0] [FAN_AMBIENT_TRANSFER=0.01,0.02,0.03]`
+
+`FAN_AMBIENT_TRANSFER` accepts the same two formats as the `fan_ambient_transfer` config option, e.g. `FAN_AMBIENT_TRANSFER=0:0.01,0.3:0.02,1:0.03`.
 
 # BACKGROUND
 
